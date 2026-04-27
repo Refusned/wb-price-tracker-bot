@@ -1,0 +1,9 @@
+services:
+  wb_station_bot:
+    build: .
+    container_name: wb_station_bot
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
