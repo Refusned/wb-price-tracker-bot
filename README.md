@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src=".github/assets/logo.webp" width="160" alt="Price of WB"/>
+
 # 📊 WB Price Tracker Bot
 
 **Telegram-бот для мониторинга цен и аналитики продаж на Wildberries.**
@@ -18,10 +20,36 @@
 
 ## 📸 Демо
 
-<!-- TODO: добавить скриншоты бота: /start, /top10, /calc, /briefing -->
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <b>Утренний брифинг</b><br/>
+      <sub><code>/briefing</code></sub><br/>
+      <img src=".github/assets/briefing.png" alt="Утренний брифинг по продажам"/>
+    </td>
+    <td align="center" width="33%">
+      <b>Топ-10 цен</b><br/>
+      <sub><code>/top10</code></sub><br/>
+      <img src=".github/assets/top10.png" alt="Топ-10 цен на категорию"/>
+    </td>
+    <td align="center" width="33%">
+      <b>Статус и метрики</b><br/>
+      <sub><code>/status</code> · <code>/today</code></sub><br/>
+      <img src=".github/assets/status.png" alt="Статус мониторинга и метрики дня"/>
+    </td>
+  </tr>
+</table>
 
-> Бот живёт в Telegram и работает в фоне 24/7 в Docker-контейнере.
-> Скриншоты будут добавлены после публикации.
+<details>
+<summary><b>📋 Полное меню команд</b></summary>
+
+<p align="center">
+  <img src=".github/assets/menu.png" width="320" alt="Полное меню команд бота"/>
+</p>
+
+</details>
+
+> Бот живёт в Telegram и работает 24/7 в Docker-контейнере на VPS.
 
 ---
 
