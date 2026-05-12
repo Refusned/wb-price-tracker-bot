@@ -4,6 +4,8 @@
 
 # 📊 WB Price Tracker Bot
 
+[![Open to work](https://img.shields.io/badge/%E2%9C%A8%20Open%20to%20work-AI%20Automation%20Specialist-22C55E?style=for-the-badge)](https://t.me/refusned)
+
 **Telegram-бот для мониторинга цен и аналитики продаж на Wildberries.**
 Фоновый поллинг каталога, алерты падения цены, маржинальный калькулятор,
 учёт закупок, аналитика собственных продаж через WB Seller API.
