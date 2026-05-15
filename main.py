@@ -24,6 +24,8 @@ from app.storage import (
     TrackedArticleRepository,
 )
 from app.storage.business_repository import BusinessRepository
+from app.storage.missed_deal_repository import MissedDealRepository
+from app.storage.personal_spp_repository import PersonalSppRepository
 from app.wb import WildberriesClient
 from app.wb.seller_client import SellerClient
 
@@ -49,6 +51,9 @@ async def run() -> None:
     price_history_repository = PriceHistoryRepository(database)
     tracked_article_repository = TrackedArticleRepository(database)
     business_repository = BusinessRepository(database)
+    personal_spp_repo = PersonalSppRepository(database)
+    missed_deal_repo = MissedDealRepository(database)
+
     await settings_repository.ensure_defaults(config.min_price_rub)
     await settings_repository.ensure_margin_defaults(
         spp_percent=config.spp_percent,
@@ -111,6 +116,8 @@ async def run() -> None:
             subscriber_repository=subscriber_repository,
             tracked_article_repository=tracked_article_repository,
             business_repository=business_repository,
+            personal_spp_repo=personal_spp_repo,
+            missed_deal_repo=missed_deal_repo,
             insight_engine=insight_engine,
             updater=updater,
         )

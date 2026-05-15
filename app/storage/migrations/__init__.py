@@ -18,6 +18,7 @@ from . import (
     m002_lot_ledger,
     m003_decision_snapshots,
     m004_personal_spp_snapshots,
+    m005_missed_deal_tags,
 )
 
 MIGRATIONS = [
@@ -25,4 +26,5 @@ MIGRATIONS = [
     m002_lot_ledger,
     m003_decision_snapshots,
     m004_personal_spp_snapshots,
+    m005_missed_deal_tags,
 ]
