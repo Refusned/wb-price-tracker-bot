@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import shutil
+import sqlite3
 import sys
 import time
 from dataclasses import dataclass
@@ -35,10 +36,24 @@ class BuildSummary:
 
 
 def _backup_database(db_path: Path) -> Path:
+    """WAL-safe SQLite backup via VACUUM INTO.
+
+    Codex review fix #2: ``shutil.copy2`` snapshots the .db file but ignores
+    .db-wal sidecar. With WAL mode, committed-but-uncheckpointed frames live
+    in .db-wal — copying only .db produces a stale or torn backup. The
+    SQLite-native solution is ``VACUUM INTO 'path'`` which runs through the
+    page cache and writes a clean, single-file consistent snapshot.
+    """
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_path = Path(db_path.as_posix() + f".bak-build-{timestamp}")
-    shutil.copy2(db_path, backup_path)
-    print(f"Backup created: {backup_path}")
+    if backup_path.exists():
+        backup_path.unlink()  # VACUUM INTO fails if target exists
+    conn = sqlite3.connect(db_path.as_posix())
+    try:
+        conn.execute("VACUUM INTO ?", (backup_path.as_posix(),))
+    finally:
+        conn.close()
+    print(f"Backup created (VACUUM INTO, WAL-safe): {backup_path}")
     return backup_path
 
 
@@ -115,26 +130,41 @@ async def _sale_allocations_for_return(
     if same_srid:
         return same_srid
 
-    # Case 2: separate-srid return (WB common pattern). Match FIFO style — find the
-    # oldest sale of this nm_id that still has un-returned units (units sold minus
-    # units already returned from same sale srid > 0). This preserves cost-basis
-    # accuracy: returns reduce the same lot the original sale consumed.
+    # Case 2: separate-srid return (WB common pattern). Codex review fix #3:
+    # earlier query joined return.srid = sale.srid via subquery, which never
+    # matches when returns get separate srids. Result: multiple returns all
+    # attached to the same (oldest) sale, making qty_open impossible.
+    #
+    # Correct approach: rank sales by FIFO position WITHIN their lot, count how
+    # many returns have already been processed per lot, then pick the first
+    # sale whose position is BEYOND the already-processed-returns count.
     rows = await db.fetchall(
         """
-        SELECT a.*
-        FROM lot_allocations a
-        JOIN lots l ON l.lot_id = a.lot_id
-        LEFT JOIN (
-            SELECT srid AS ret_srid, SUM(qty) AS returned_qty
+        WITH ranked_sales AS (
+            SELECT
+                a.id, a.lot_id, a.event_type, a.srid, a.qty,
+                a.allocated_cost, a.event_at, a.build_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY a.lot_id
+                    ORDER BY a.event_at ASC, a.id ASC
+                ) AS sale_pos
+            FROM lot_allocations a
+            JOIN lots l ON l.lot_id = a.lot_id
+            WHERE l.nm_id = ?
+              AND a.event_type = 'sale'
+              AND a.event_at <= ?
+        ),
+        returns_per_lot AS (
+            SELECT lot_id, COALESCE(SUM(qty), 0) AS n_returned
             FROM lot_allocations
             WHERE event_type = 'return'
-            GROUP BY srid
-        ) r ON r.ret_srid = a.srid
-        WHERE l.nm_id = ?
-          AND a.event_type = 'sale'
-          AND a.event_at <= ?
-          AND (a.qty - COALESCE(r.returned_qty, 0)) > 0
-        ORDER BY a.event_at ASC, a.id ASC
+            GROUP BY lot_id
+        )
+        SELECT rs.*
+        FROM ranked_sales rs
+        LEFT JOIN returns_per_lot rpl ON rpl.lot_id = rs.lot_id
+        WHERE rs.sale_pos > COALESCE(rpl.n_returned, 0)
+        ORDER BY rs.event_at ASC, rs.id ASC
         LIMIT 1
         """,
         (nm_id, return_event_at),

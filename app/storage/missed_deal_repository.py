@@ -47,6 +47,24 @@ class MissedDealRepository:
                   AND d.observed_price < d.prev_price
                   AND ((d.prev_price - d.observed_price) / d.prev_price) * 100.0 >= 5.0
                   AND 20.0 >= ?
+            ),
+            -- Codex review fix #10: dedupe candidates by (nm_id, candidate_date).
+            -- missed_deal_tags has UNIQUE(nm_id, candidate_date), so showing
+            -- multiple drops for the same nm/day means tagging the first silently
+            -- no-ops the rest. Pick the LARGEST drop per (nm_id, date).
+            best_per_day AS (
+                SELECT
+                    nm_id,
+                    candidate_date,
+                    observed_price,
+                    prev_price,
+                    drop_pct,
+                    observed_margin_estimate,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY nm_id, candidate_date
+                        ORDER BY (prev_price - observed_price) DESC, drop_pct DESC
+                    ) AS rn
+                FROM candidates
             )
             SELECT
                 CAST(c.nm_id AS INTEGER) AS nm_id,
@@ -56,12 +74,24 @@ class MissedDealRepository:
                 c.drop_pct,
                 c.observed_margin_estimate,
                 COALESCE(i.name, 'Без названия') AS name
-            FROM candidates c
+            FROM best_per_day c
             LEFT JOIN items i ON i.nm_id = c.nm_id
-            WHERE NOT EXISTS (
+            WHERE c.rn = 1
+              AND NOT EXISTS (
                 SELECT 1
                 FROM purchases p
-                WHERE p.nm_id = CAST(c.nm_id AS INTEGER)
+                WHERE (
+                    -- Codex review fix #7 (partial): also match by supplier_article
+                    -- for legacy purchases that lack nm_id. The bot's /buy can
+                    -- record purchases with NULL nm_id but a valid article that
+                    -- corresponds to a specific nm_id via own_sales mapping.
+                    p.nm_id = CAST(c.nm_id AS INTEGER)
+                    OR (p.nm_id IS NULL AND p.supplier_article IN (
+                        SELECT DISTINCT supplier_article FROM own_sales
+                        WHERE nm_id = CAST(c.nm_id AS INTEGER)
+                          AND supplier_article IS NOT NULL
+                    ))
+                )
                   AND date(p.date) BETWEEN date(c.candidate_date, '-3 days')
                                       AND date(c.candidate_date, '+3 days')
             )
