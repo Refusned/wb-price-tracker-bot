@@ -45,6 +45,14 @@ def get_router(
     @router.callback_query(MissedDealStates.Tagging, F.data.startswith("md:"))
     async def missed_deal_callback(callback: CallbackQuery, state: FSMContext) -> None:
         data = callback.data or ""
+
+        # Codex review fix #6: owner-mode check at callback (not just at command entry).
+        # Stale buttons in forwarded messages, group additions, etc. could trigger.
+        user = callback.from_user
+        if not config.is_user_allowed(user.id if user is not None else None):
+            await callback.answer("Доступ запрещён.", show_alert=True)
+            return
+
         await callback.answer()
 
         if data == "md:stop":
@@ -66,8 +74,21 @@ def get_router(
             parts = data.split(":", 3)
             if len(parts) != 4:
                 return
-            reason = parts[1]
+            reason, nm_id_str, candidate_date_str = parts[1], parts[2], parts[3]
             if reason not in MISSED_DEAL_REASONS:
+                return
+
+            # Codex review fix #4: validate callback payload against current FSM
+            # candidate. Stale buttons from older messages must not tag the wrong
+            # candidate after the bot advanced.
+            try:
+                callback_nm_id = int(nm_id_str)
+            except ValueError:
+                return
+            if (callback_nm_id != int(candidate["nm_id"])
+                    or candidate_date_str != str(candidate["candidate_date"])):
+                # Stale button — silently ignore. The user clicked an earlier
+                # message but the FSM moved on.
                 return
 
             inserted = await missed_deal_repo.tag(

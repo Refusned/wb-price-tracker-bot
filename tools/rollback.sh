@@ -50,19 +50,37 @@ if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
     exit 0
 fi
 
-# Stop bot if docker-compose is available
-if command -v docker-compose >/dev/null 2>&1 && [[ -f docker-compose.yml ]]; then
-    echo ">>> Stopping bot..."
+# Stop bot (BEFORE moving WAL sidecars).
+# Codex review fix #1: WAL mode keeps committed frames in .db-wal until
+# checkpoint. If we restore .db without handling .db-wal/.db-shm sidecars,
+# SQLite either rejects opens (sidecar mismatch) or replays stale WAL into
+# the restored DB → silent corruption.
+if command -v systemctl >/dev/null 2>&1 && systemctl list-units --type=service | grep -q wb-bot.service; then
+    echo ">>> Stopping wb-bot.service..."
+    systemctl stop wb-bot.service || true
+elif command -v docker-compose >/dev/null 2>&1 && [[ -f docker-compose.yml ]]; then
+    echo ">>> Stopping bot via docker-compose..."
     docker-compose stop || true
+else
+    echo ">>> WARNING: no bot service manager detected. Make sure the bot is stopped before continuing."
+    read -r -p "Bot is stopped? [y/N] " stopped
+    [[ "$stopped" != "y" && "$stopped" != "Y" ]] && { echo "Aborted."; exit 1; }
 fi
+sleep 1  # let writers flush
 
-# Move current
+# Move current DB + WAL sidecars TOGETHER so the trio stays consistent.
 if [[ -f "$DB" ]]; then
-    echo ">>> Renaming current DB: $DB → $PRE_ROLLBACK"
+    echo ">>> Moving current DB trio aside (.db, .db-wal, .db-shm) → ${PRE_ROLLBACK}*"
     mv "$DB" "$PRE_ROLLBACK"
+    [[ -f "$DB-wal" ]] && mv "$DB-wal" "$PRE_ROLLBACK-wal"
+    [[ -f "$DB-shm" ]] && mv "$DB-shm" "$PRE_ROLLBACK-shm"
 fi
 
-# Restore
+# Restore. The backup was created via VACUUM INTO (checkpointed) or by
+# stopping the bot first, so it has no WAL sidecars and is consistent.
+# Any stale -wal/-shm next to it would be corrupting, so remove first.
+echo ">>> Removing any stale WAL sidecars for the new $DB..."
+rm -f "$DB-wal" "$DB-shm"
 echo ">>> Restoring: $BACKUP → $DB"
 cp "$BACKUP" "$DB"
 
