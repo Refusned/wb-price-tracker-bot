@@ -11,6 +11,7 @@ from app.storage.models import PriceDropEvent
 from app.services.insight_engine import InsightEngine
 from app.services.margin_calculator import MarginCalculator
 from app.storage.business_repository import BusinessRepository
+from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
 from app.storage.repositories import (
     ItemRepository,
     MetaRepository,
@@ -46,6 +47,7 @@ class WbUpdateScheduler:
         price_stats_repository: PriceStatsRepository,
         price_history_repository: PriceHistoryRepository,
         tracked_article_repository: TrackedArticleRepository,
+        decision_snapshot_repository: DecisionSnapshotRepository | None = None,
         business_repository: BusinessRepository | None = None,
         seller_client: SellerClient | None = None,
         insight_engine: InsightEngine | None = None,
@@ -60,6 +62,7 @@ class WbUpdateScheduler:
         self._price_stats_repository = price_stats_repository
         self._price_history_repository = price_history_repository
         self._tracked_article_repository = tracked_article_repository
+        self._decision_snapshot_repository = decision_snapshot_repository
         self._business_repository = business_repository
         self._seller_client = seller_client
         self._insight_engine = insight_engine
@@ -275,6 +278,26 @@ class WbUpdateScheduler:
                     margin = calculator.calculate(event.new_price_rub, sell_price)
                 except ValueError:
                     pass
+
+            # Day 12: record decision snapshot for Day 22 counterfactual.
+            # Captures price + margin estimate at decision time so we can later
+            # backtest "did this alert lead to a profitable buy?". One row per
+            # event (not per chat_id). Failure to record is logged but never
+            # blocks alert delivery — the alert is the primary user-facing path.
+            if self._decision_snapshot_repository is not None:
+                margin_estimate_pct = margin.margin_percent if margin is not None else None
+                try:
+                    await self._decision_snapshot_repository.record(
+                        nm_id=int(event.nm_id),
+                        observed_price=float(event.new_price_rub),
+                        observed_margin_estimate=margin_estimate_pct,
+                        alert_sent=True,
+                        source="scheduler.price_drop",
+                    )
+                except Exception as exc:
+                    self._logger.warning(
+                        "decision_snapshot record failed nm_id=%s: %s", event.nm_id, exc,
+                    )
 
             text = build_price_drop_alert_message(
                 query=self._config.wb_query,
