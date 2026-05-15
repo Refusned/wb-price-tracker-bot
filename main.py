@@ -24,6 +24,7 @@ from app.storage import (
     TrackedArticleRepository,
 )
 from app.storage.business_repository import BusinessRepository
+from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
 from app.storage.missed_deal_repository import MissedDealRepository
 from app.storage.personal_spp_repository import PersonalSppRepository
 from app.wb import WildberriesClient
@@ -53,6 +54,7 @@ async def run() -> None:
     business_repository = BusinessRepository(database)
     personal_spp_repo = PersonalSppRepository(database)
     missed_deal_repo = MissedDealRepository(database)
+    decision_snapshot_repo = DecisionSnapshotRepository(database)
 
     await settings_repository.ensure_defaults(config.min_price_rub)
     await settings_repository.ensure_margin_defaults(
@@ -103,6 +105,7 @@ async def run() -> None:
             price_stats_repository=price_stats_repository,
             price_history_repository=price_history_repository,
             tracked_article_repository=tracked_article_repository,
+            decision_snapshot_repository=decision_snapshot_repo,
             business_repository=business_repository,
             seller_client=seller_client,
             insight_engine=insight_engine,
@@ -118,6 +121,7 @@ async def run() -> None:
             business_repository=business_repository,
             personal_spp_repo=personal_spp_repo,
             missed_deal_repo=missed_deal_repo,
+            decision_snapshot_repo=decision_snapshot_repo,
             insight_engine=insight_engine,
             updater=updater,
         )

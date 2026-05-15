@@ -3,10 +3,11 @@ from __future__ import annotations
 from aiogram import Dispatcher
 
 from app.config import AppConfig
-from app.handlers import admin, business, common, margin, missed_deals, spp_log, top10
+from app.handlers import admin, business, common, decisions, margin, missed_deals, spp_log, top10
 from app.scheduler import WbUpdateScheduler
 from app.services.insight_engine import InsightEngine
 from app.storage.business_repository import BusinessRepository
+from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
 from app.storage.missed_deal_repository import MissedDealRepository
 from app.storage.personal_spp_repository import PersonalSppRepository
 from app.storage.repositories import (
@@ -28,6 +29,7 @@ def build_dispatcher(
     business_repository: BusinessRepository,
     personal_spp_repo: PersonalSppRepository,
     missed_deal_repo: MissedDealRepository,
+    decision_snapshot_repo: DecisionSnapshotRepository,
     insight_engine: InsightEngine | None,
     updater: WbUpdateScheduler,
 ) -> Dispatcher:
@@ -77,6 +79,13 @@ def build_dispatcher(
         spp_log.get_router(
             config=config,
             personal_spp_repo=personal_spp_repo,
+        )
+    )
+    dp.include_router(
+        decisions.get_router(
+            config=config,
+            decision_snapshot_repo=decision_snapshot_repo,
+            subscriber_repository=subscriber_repository,
         )
     )
     dp.include_router(
