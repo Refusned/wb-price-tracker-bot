@@ -13,8 +13,16 @@ in the ``schema_migrations`` table and skips ones already applied.
 """
 from __future__ import annotations
 
-from . import m001_init_versioning
+from . import (
+    m001_init_versioning,
+    m002_lot_ledger,
+    m003_decision_snapshots,
+    m004_personal_spp_snapshots,
+)
 
 MIGRATIONS = [
     m001_init_versioning,
+    m002_lot_ledger,
+    m003_decision_snapshots,
+    m004_personal_spp_snapshots,
 ]
