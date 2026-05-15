@@ -195,7 +195,9 @@ class WbUpdateScheduler:
                 await self._item_repository.replace_all(items, updated_at)
 
                 await self._price_history_repository.record_snapshot(items, updated_at)
-                await self._price_history_repository.cleanup_old(days=14)
+                await self._price_history_repository.cleanup_old(
+                    days=self._config.price_history_retention_days
+                )
 
                 delivered_alerts = 0
                 if self._config.alerts_enabled and drop_events:

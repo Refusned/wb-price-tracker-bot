@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -221,6 +222,63 @@ class Database:
                 """
             )
             await conn.commit()
+
+    async def apply_migrations(self) -> list[int]:
+        """Run versioned migrations from app.storage.migrations.
+
+        Creates the ``schema_migrations`` table on first run, then iterates the
+        ``MIGRATIONS`` list from ``app.storage.migrations``. Each migration is
+        applied at most once (idempotent across restarts).
+
+        Returns the list of newly-applied version numbers. Existing-applied ones
+        are silently skipped.
+
+        Call AFTER ``migrate()`` so the base ``CREATE TABLE IF NOT EXISTS``
+        schema is in place. Migrations should handle additive schema changes
+        (new tables, new columns via ALTER, new indexes).
+        """
+        # Lazy import to avoid circular dependency at module load
+        from app.storage import migrations as _migrations_module
+
+        conn = self._require_conn()
+        applied_now: list[int] = []
+        async with self._lock:
+            # Bootstrap the schema_migrations table itself
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    applied_at TEXT NOT NULL
+                )
+                """
+            )
+            await conn.commit()
+
+            # Read already-applied versions
+            cursor = await conn.execute("SELECT version FROM schema_migrations")
+            applied_rows = await cursor.fetchall()
+            await cursor.close()
+            already_applied = {row[0] for row in applied_rows}
+
+            # Apply pending migrations in registry order
+            for mig in _migrations_module.MIGRATIONS:
+                if mig.VERSION in already_applied:
+                    continue
+                await mig.up(conn)
+                await conn.execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) "
+                    "VALUES (?, ?, ?)",
+                    (
+                        mig.VERSION,
+                        mig.NAME,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+                await conn.commit()
+                applied_now.append(mig.VERSION)
+
+        return applied_now
 
     async def execute(self, query: str, params: Sequence[Any] | None = None) -> None:
         conn = self._require_conn()

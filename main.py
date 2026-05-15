@@ -37,6 +37,9 @@ async def run() -> None:
     database = Database(config.sqlite_path)
     await database.connect()
     await database.migrate()
+    applied = await database.apply_migrations()
+    if applied:
+        logger.info("Applied schema migrations: %s", applied)
 
     item_repository = ItemRepository(database)
     meta_repository = MetaRepository(database)
