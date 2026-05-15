@@ -107,6 +107,12 @@ class AppConfig:
     profit_acquiring_percent: float
     # Auto-sync history (full resync every N days)
     seller_full_resync_days: int
+    # Price history retention (days). Critical for Day 22 counterfactual measurement.
+    # Default 120 (was hardcoded 14 in scheduler.py:198 before Day 0 hotfix).
+    price_history_retention_days: int
+    # HMAC secret for signing Telegram callback payloads on mutating inline buttons.
+    # Bot MUST refuse to start without this set if inline-button handlers are enabled.
+    callback_signing_secret: str
 
     @property
     def owner_mode_enabled(self) -> bool:
@@ -175,4 +181,6 @@ def load_config() -> AppConfig:
         profit_logistics_per_unit_rub=_to_float("PROFIT_LOGISTICS_PER_UNIT_RUB", 182.0),
         profit_acquiring_percent=_to_float("PROFIT_ACQUIRING_PERCENT", 0.0),
         seller_full_resync_days=_to_int("SELLER_FULL_RESYNC_DAYS", 7),
+        price_history_retention_days=_to_int("PRICE_HISTORY_RETENTION_DAYS", 120),
+        callback_signing_secret=os.getenv("CALLBACK_SIGNING_SECRET", "").strip(),
     )
