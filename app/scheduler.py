@@ -10,6 +10,7 @@ from app.config import AppConfig
 from app.storage.models import PriceDropEvent
 from app.services.insight_engine import InsightEngine
 from app.services.margin_calculator import MarginCalculator
+from app.services.stock_arrival_detector import StockArrivalDetector
 from app.storage.business_repository import BusinessRepository
 from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
 from app.storage.repositories import (
@@ -48,6 +49,7 @@ class WbUpdateScheduler:
         price_history_repository: PriceHistoryRepository,
         tracked_article_repository: TrackedArticleRepository,
         decision_snapshot_repository: DecisionSnapshotRepository | None = None,
+        stock_arrival_detector: StockArrivalDetector | None = None,
         business_repository: BusinessRepository | None = None,
         seller_client: SellerClient | None = None,
         insight_engine: InsightEngine | None = None,
@@ -63,6 +65,7 @@ class WbUpdateScheduler:
         self._price_history_repository = price_history_repository
         self._tracked_article_repository = tracked_article_repository
         self._decision_snapshot_repository = decision_snapshot_repository
+        self._stock_arrival_detector = stock_arrival_detector
         self._business_repository = business_repository
         self._seller_client = seller_client
         self._insight_engine = insight_engine
@@ -389,6 +392,19 @@ class WbUpdateScheduler:
                 all_stocks = list(fbo_stocks) + list(fbs_stocks)
                 await self._business_repository.upsert_stocks(all_stocks, seen_at)
                 stocks = all_stocks  # для лога ниже
+
+                # Day 14: detect new stock arrivals → DM owner asking for buy price.
+                # Runs AFTER upsert_stocks so detector reads fresh totals from DB.
+                if self._stock_arrival_detector is not None:
+                    try:
+                        prompts_created = await self._stock_arrival_detector.scan()
+                        if prompts_created:
+                            self._logger.info(
+                                "stock_arrival_detector: %d new purchase prompts created",
+                                prompts_created,
+                            )
+                    except Exception as exc:
+                        self._logger.warning("stock_arrival_detector scan failed: %s", exc)
 
                 await self._meta_repository.set_value("last_seller_update_at", seen_at)
                 await self._meta_repository.set_value("last_seller_orders_count", str(len(orders)))
