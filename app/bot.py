@@ -6,6 +6,7 @@ from app.config import AppConfig
 from app.handlers import admin, business, common, decisions, margin, missed_deals, purchase_prompts, spp_log, top10
 from app.scheduler import WbUpdateScheduler
 from app.services.insight_engine import InsightEngine
+from app.services.personal_spp_auto_collector import PersonalSppAutoCollector
 from app.storage.business_repository import BusinessRepository
 from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
 from app.storage.missed_deal_repository import MissedDealRepository
@@ -32,6 +33,7 @@ def build_dispatcher(
     missed_deal_repo: MissedDealRepository,
     decision_snapshot_repo: DecisionSnapshotRepository,
     stock_arrival_repo: StockArrivalRepository,
+    personal_spp_collector: PersonalSppAutoCollector | None,
     insight_engine: InsightEngine | None,
     updater: WbUpdateScheduler,
 ) -> Dispatcher:
@@ -81,6 +83,7 @@ def build_dispatcher(
         spp_log.get_router(
             config=config,
             personal_spp_repo=personal_spp_repo,
+            personal_spp_collector=personal_spp_collector,
         )
     )
     dp.include_router(

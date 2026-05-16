@@ -10,6 +10,7 @@ from app.config import AppConfig
 from app.storage.models import PriceDropEvent
 from app.services.insight_engine import InsightEngine
 from app.services.margin_calculator import MarginCalculator
+from app.services.personal_spp_auto_collector import PersonalSppAutoCollector
 from app.services.stock_arrival_detector import StockArrivalDetector
 from app.storage.business_repository import BusinessRepository
 from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
@@ -50,6 +51,7 @@ class WbUpdateScheduler:
         tracked_article_repository: TrackedArticleRepository,
         decision_snapshot_repository: DecisionSnapshotRepository | None = None,
         stock_arrival_detector: StockArrivalDetector | None = None,
+        personal_spp_auto_collector: PersonalSppAutoCollector | None = None,
         business_repository: BusinessRepository | None = None,
         seller_client: SellerClient | None = None,
         insight_engine: InsightEngine | None = None,
@@ -66,6 +68,7 @@ class WbUpdateScheduler:
         self._tracked_article_repository = tracked_article_repository
         self._decision_snapshot_repository = decision_snapshot_repository
         self._stock_arrival_detector = stock_arrival_detector
+        self._personal_spp_auto_collector = personal_spp_auto_collector
         self._business_repository = business_repository
         self._seller_client = seller_client
         self._insight_engine = insight_engine
@@ -392,6 +395,21 @@ class WbUpdateScheduler:
                 all_stocks = list(fbo_stocks) + list(fbs_stocks)
                 await self._business_repository.upsert_stocks(all_stocks, seen_at)
                 stocks = all_stocks  # для лога ниже
+
+                # Day 15: auto-collect personal SPP proxy from recent sales.
+                # WB Seller API does NOT expose personal buyer SPP, so we use
+                # the median SPP buyers got on the seller's items in last 7d
+                # as a proxy for the algorithmic SPP regime in his categories.
+                # Idempotent: max 1 write per (category, day).
+                if self._personal_spp_auto_collector is not None:
+                    try:
+                        n_spp = await self._personal_spp_auto_collector.maybe_collect()
+                        if n_spp:
+                            self._logger.info(
+                                "personal_spp auto: %d category snapshots written", n_spp,
+                            )
+                    except Exception as exc:
+                        self._logger.warning("personal_spp auto failed: %s", exc)
 
                 # Day 14: detect new stock arrivals → DM owner asking for buy price.
                 # Runs AFTER upsert_stocks so detector reads fresh totals from DB.

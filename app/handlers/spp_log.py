@@ -7,12 +7,17 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from app.config import AppConfig
+from app.services.personal_spp_auto_collector import PersonalSppAutoCollector
 from app.storage.personal_spp_repository import PersonalSppRepository
 
 from .common import ensure_allowed
 
 
-def get_router(config: AppConfig, personal_spp_repo: PersonalSppRepository) -> Router:
+def get_router(
+    config: AppConfig,
+    personal_spp_repo: PersonalSppRepository,
+    personal_spp_collector: PersonalSppAutoCollector | None = None,
+) -> Router:
     router = Router(name="spp_log")
 
     @router.message(Command("setspp_log"))
@@ -108,6 +113,38 @@ def get_router(config: AppConfig, personal_spp_repo: PersonalSppRepository) -> R
             f"{sparkline}"
             f"{warning}"
         )
+
+    @router.message(Command("refresh_spp"))
+    async def refresh_spp_handler(message: Message) -> None:
+        """Manually trigger auto-collection from own_sales (force=True)."""
+        if not await ensure_allowed(message, config):
+            return
+        if personal_spp_collector is None:
+            await message.answer(
+                "Auto-collector не настроен (нет WB Seller API key)."
+            )
+            return
+        try:
+            n = await personal_spp_collector.maybe_collect(force=True)
+        except Exception as exc:
+            await message.answer(f"Ошибка при сборе СПП: {exc}")
+            return
+        if n == 0:
+            await message.answer(
+                "Нет категорий с достаточным количеством продаж "
+                "(минимум 3 за последние 7 дней). Попробуй позже."
+            )
+            return
+        # Show what was just written
+        history = await personal_spp_repo.history(days=1)
+        recent_auto = [r for r in history if r["source"] == "auto_from_sales"][:5]
+        lines = [f"✅ Собрано {n} категорий СПП из недавних продаж:"]
+        for row in recent_auto:
+            lines.append(
+                f"  • {row['category']}: {_fmt(row['spp_percent'])}% "
+                f"({row['snapshot_at'][:10]})"
+            )
+        await message.answer("\n".join(lines))
 
     return router
 
