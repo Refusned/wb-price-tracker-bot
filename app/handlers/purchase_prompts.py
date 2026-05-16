@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.config import AppConfig
 from app.storage.business_repository import BusinessRepository
+from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
 from app.storage.repositories import SubscriberRepository
 from app.storage.stock_arrival_repository import StockArrivalRepository
 
@@ -23,6 +24,7 @@ def get_router(
     stock_arrival_repo: StockArrivalRepository,
     business_repository: BusinessRepository,
     subscriber_repository: SubscriberRepository,
+    decision_snapshot_repo: DecisionSnapshotRepository | None = None,
 ) -> Router:
     router = Router(name="purchase_prompts")
 
@@ -148,6 +150,24 @@ def get_router(
             notes=f"auto from stock arrival prompt #{prompt_id}",
         )
 
+        # Day 16: link to recent decision_snapshot if available. nm_id is
+        # always present in auto-prompts (came from stock arrival detector).
+        linked_snapshot_id: int | None = None
+        if decision_snapshot_repo is not None:
+            try:
+                snap = await decision_snapshot_repo.find_most_recent_unlinked(
+                    nm_id=nm_id, within_seconds=86400,
+                )
+                if snap is not None:
+                    await decision_snapshot_repo.link_to_purchase(
+                        snapshot_id=int(snap["id"]),
+                        purchase_id=int(purchase_id),
+                        action="bought",
+                    )
+                    linked_snapshot_id = int(snap["id"])
+            except Exception:
+                pass  # best-effort
+
         await stock_arrival_repo.resolve(
             prompt_id,
             "replied",
@@ -156,11 +176,13 @@ def get_router(
         await state.clear()
 
         total = qty * price
+        link_note = f"\n🔗 Связан с decision #{linked_snapshot_id}" if linked_snapshot_id else ""
         await message.answer(
             f"✅ Записал партию: артикул {nm_id} × {qty} шт × "
             f"{_fmt_money(price)}₽ = {_fmt_money(total)}₽. "
             "Сохранил в /purchases. "
             "Лот будет привязан после следующего lot ledger build."
+            f"{link_note}"
         )
 
     return router

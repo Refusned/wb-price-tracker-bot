@@ -15,6 +15,7 @@ from app.config import AppConfig
 from app.scheduler import WbUpdateScheduler
 from app.services.insight_engine import InsightEngine
 from app.storage.business_repository import BusinessRepository
+from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
 from app.storage.repositories import SettingsRepository, SubscriberRepository
 from app.utils.business_formatting import (
     build_abc_message,
@@ -37,6 +38,7 @@ def get_router(
     subscriber_repository: SubscriberRepository,
     insight_engine: InsightEngine,
     updater: WbUpdateScheduler,
+    decision_snapshot_repo: DecisionSnapshotRepository | None = None,
 ) -> Router:
     router = Router(name="business")
 
@@ -300,15 +302,37 @@ def get_router(
             spp_at_purchase=spp,
             notes=None,
         )
+
+        # Day 16: link to recent decision_snapshot if available.
+        # Only when nm_id known directly. For supplier_article-only purchases
+        # the user can re-run with explicit nm_id later if linking matters.
+        linked_snapshot_id: int | None = None
+        if decision_snapshot_repo is not None and nm_id is not None:
+            try:
+                snap = await decision_snapshot_repo.find_most_recent_unlinked(
+                    nm_id=int(nm_id), within_seconds=86400,
+                )
+                if snap is not None:
+                    await decision_snapshot_repo.link_to_purchase(
+                        snapshot_id=int(snap["id"]),
+                        purchase_id=int(pid),
+                        action="bought",
+                    )
+                    linked_snapshot_id = int(snap["id"])
+            except Exception:
+                pass  # linking is best-effort, don't block purchase
+
         total = qty * price
         ref = article or (f"nm{nm_id}" if nm_id else "—")
+        link_note = f"\n🔗 Связан с decision #{linked_snapshot_id}" if linked_snapshot_id else ""
         await message.answer(
             f"✅ Закупка #{pid} записана\n\n"
             f"Артикул: {ref}\n"
             f"Количество: {qty} шт\n"
             f"Цена/шт: {format_price_rub(price)}\n"
             f"Всего: {format_price_rub(total)}\n"
-            f"СПП на момент: {spp}%\n\n"
+            f"СПП на момент: {spp}%"
+            f"{link_note}\n\n"
             f"💡 Прибыль по артикулу: /profit"
         )
 

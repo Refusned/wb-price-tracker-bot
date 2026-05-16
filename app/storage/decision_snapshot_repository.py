@@ -67,6 +67,50 @@ class DecisionSnapshotRepository:
             (action, int(snapshot_id)),
         )
 
+    async def link_to_purchase(
+        self, snapshot_id: int, purchase_id: int, *, action: str = "bought",
+    ) -> None:
+        """Day 16: tie a decision snapshot to the resulting purchase.
+
+        Called when a new purchases row is created (manual /buy or auto via
+        stock arrival prompt). Sets user_action and purchase_id atomically.
+        """
+        if action not in DECISION_ACTIONS:
+            raise ValueError("action must be one of: bought, ignored, too_late")
+        await self._db.execute(
+            """
+            UPDATE decision_snapshots
+            SET user_action = ?, purchase_id = ?
+            WHERE id = ?
+            """,
+            (action, int(purchase_id), int(snapshot_id)),
+        )
+
+    async def find_most_recent_unlinked(
+        self, nm_id: int, within_seconds: int = 86400,
+    ) -> dict | None:
+        """Find most recent decision_snapshot for nm_id without a purchase link.
+
+        Used when creating a new purchase to find the alert that probably led
+        to it. Returns None if none found.
+        """
+        self._validate_nm_id(nm_id)
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=max(within_seconds, 1))).isoformat()
+        row = await self._db.fetchone(
+            """
+            SELECT *
+            FROM decision_snapshots
+            WHERE nm_id = ?
+              AND snapshot_at >= ?
+              AND purchase_id IS NULL
+              AND (user_action IS NULL OR user_action = '')
+            ORDER BY snapshot_at DESC, id DESC
+            LIMIT 1
+            """,
+            (int(nm_id), cutoff),
+        )
+        return self._row_to_dict(row) if row else None
+
     async def find_recent_for_nm(self, nm_id: int, within_seconds: int = 3600) -> list[dict]:
         self._validate_nm_id(nm_id)
         cutoff = (datetime.now(timezone.utc) - timedelta(seconds=max(within_seconds, 1))).isoformat()
@@ -188,4 +232,9 @@ class DecisionSnapshotRepository:
             "alert_sent": int(row["alert_sent"]),
             "user_action": str(row["user_action"]) if row["user_action"] is not None else None,
             "source": str(row["source"]),
+            "purchase_id": (
+                int(row["purchase_id"])
+                if "purchase_id" in row.keys() and row["purchase_id"] is not None
+                else None
+            ),
         }
