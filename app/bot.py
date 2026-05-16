@@ -106,6 +106,7 @@ def build_dispatcher(
             stock_arrival_repo=stock_arrival_repo,
             business_repository=business_repository,
             subscriber_repository=subscriber_repository,
+            decision_snapshot_repo=decision_snapshot_repo,
         )
     )
 
@@ -118,6 +119,7 @@ def build_dispatcher(
                 subscriber_repository=subscriber_repository,
                 insight_engine=insight_engine,
                 updater=updater,
+                decision_snapshot_repo=decision_snapshot_repo,
             )
         )
 

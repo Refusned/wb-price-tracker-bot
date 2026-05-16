@@ -411,6 +411,16 @@ class WbUpdateScheduler:
                     except Exception as exc:
                         self._logger.warning("personal_spp auto failed: %s", exc)
 
+                # Day 16: auto-sync finance_journal once per 24h.
+                # The WB financial report endpoint is heavier and rate-limited,
+                # so we don't fetch it every 30 min — daily is enough. Without
+                # this auto-sync, finance data stays stale until owner manually
+                # runs /sync_finance.
+                try:
+                    await self._maybe_sync_finance(now)
+                except Exception as exc:
+                    self._logger.warning("finance auto-sync failed: %s", exc)
+
                 # Day 14: detect new stock arrivals → DM owner asking for buy price.
                 # Runs AFTER upsert_stocks so detector reads fresh totals from DB.
                 if self._stock_arrival_detector is not None:
@@ -442,6 +452,55 @@ class WbUpdateScheduler:
             except Exception as exc:
                 self._logger.exception("Seller update failed: %s", exc)
                 return False
+
+    async def _maybe_sync_finance(self, now: datetime, *, force: bool = False) -> bool:
+        """Auto-sync finance_journal once per 24h. Skips if recent.
+
+        Day 16: this used to be only manual via /sync_finance and the bot
+        could go weeks without fresh financial data, breaking actual-margin
+        calculations and Day 22 counterfactual.
+
+        Args:
+            now: current UTC datetime
+            force: ignore the 24h lock (used by manual /sync_finance command)
+        Returns:
+            True if a sync was actually performed
+        """
+        if self._seller_client is None or self._business_repository is None:
+            return False
+
+        last_sync_str = await self._meta_repository.get_value("last_finance_sync_at")
+        if last_sync_str and not force:
+            try:
+                last_sync = datetime.fromisoformat(last_sync_str.replace("Z", "+00:00"))
+                if last_sync.tzinfo is None:
+                    last_sync = last_sync.replace(tzinfo=timezone.utc)
+                age_hours = (now - last_sync).total_seconds() / 3600
+                if age_hours < 24:
+                    return False  # synced within last 24h, skip
+            except ValueError:
+                pass  # corrupt timestamp, proceed with sync
+
+        # Window: 30 days back. WB report is slow to update (T+1 to T+7),
+        # so 30 days catches late-arriving entries from earlier weeks.
+        try:
+            rows = await self._seller_client.get_financial_report(
+                now - timedelta(days=30), now,
+            )
+            n = await self._business_repository.upsert_finance_journal(
+                rows, now.isoformat(),
+            )
+            await self._meta_repository.set_value(
+                "last_finance_sync_at", now.isoformat(),
+            )
+            self._logger.info(
+                "Finance auto-sync: %d rows fetched, %d upserted, window=30d",
+                len(rows), n,
+            )
+            return True
+        except Exception as exc:
+            self._logger.warning("Finance auto-sync error: %s", exc)
+            return False
 
     async def _send_event_alerts(self) -> None:
         if not self._business_repository:
