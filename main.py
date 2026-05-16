@@ -13,6 +13,7 @@ from app.config import load_config
 from app.logging_setup import setup_logging
 from app.scheduler import WbUpdateScheduler
 from app.services.insight_engine import InsightEngine
+from app.services.stock_arrival_detector import StockArrivalDetector
 from app.storage import (
     Database,
     ItemRepository,
@@ -27,6 +28,7 @@ from app.storage.business_repository import BusinessRepository
 from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
 from app.storage.missed_deal_repository import MissedDealRepository
 from app.storage.personal_spp_repository import PersonalSppRepository
+from app.storage.stock_arrival_repository import StockArrivalRepository
 from app.wb import WildberriesClient
 from app.wb.seller_client import SellerClient
 
@@ -55,6 +57,7 @@ async def run() -> None:
     personal_spp_repo = PersonalSppRepository(database)
     missed_deal_repo = MissedDealRepository(database)
     decision_snapshot_repo = DecisionSnapshotRepository(database)
+    stock_arrival_repo = StockArrivalRepository(database)
 
     await settings_repository.ensure_defaults(config.min_price_rub)
     await settings_repository.ensure_margin_defaults(
@@ -94,6 +97,15 @@ async def run() -> None:
             logger.info("WB_SELLER_API_KEY not set — Seller API disabled")
 
         bot = Bot(token=config.bot_token)
+
+        stock_arrival_detector = StockArrivalDetector(
+            repository=stock_arrival_repo,
+            business_repository=business_repository,
+            subscriber_repository=subscriber_repository,
+            bot=bot,
+            delta_threshold=config.stock_arrival_delta_threshold,
+        )
+
         updater = WbUpdateScheduler(
             config=config,
             wb_client=wb_client,
@@ -106,6 +118,7 @@ async def run() -> None:
             price_history_repository=price_history_repository,
             tracked_article_repository=tracked_article_repository,
             decision_snapshot_repository=decision_snapshot_repo,
+            stock_arrival_detector=stock_arrival_detector,
             business_repository=business_repository,
             seller_client=seller_client,
             insight_engine=insight_engine,
@@ -122,6 +135,7 @@ async def run() -> None:
             personal_spp_repo=personal_spp_repo,
             missed_deal_repo=missed_deal_repo,
             decision_snapshot_repo=decision_snapshot_repo,
+            stock_arrival_repo=stock_arrival_repo,
             insight_engine=insight_engine,
             updater=updater,
         )

@@ -113,6 +113,9 @@ class AppConfig:
     # HMAC secret for signing Telegram callback payloads on mutating inline buttons.
     # Bot MUST refuse to start without this set if inline-button handlers are enabled.
     callback_signing_secret: str
+    # Stock arrival detector: minimum positive delta in SUM(quantity+in_way_to+in_way_from)
+    # per nm_id to trigger a "what did you pay?" prompt. Default 5 units.
+    stock_arrival_delta_threshold: int
 
     @property
     def owner_mode_enabled(self) -> bool:
@@ -183,4 +186,5 @@ def load_config() -> AppConfig:
         seller_full_resync_days=_to_int("SELLER_FULL_RESYNC_DAYS", 7),
         price_history_retention_days=_to_int("PRICE_HISTORY_RETENTION_DAYS", 120),
         callback_signing_secret=os.getenv("CALLBACK_SIGNING_SECRET", "").strip(),
+        stock_arrival_delta_threshold=_to_int("STOCK_ARRIVAL_DELTA_THRESHOLD", 5),
     )
