@@ -13,6 +13,7 @@ from app.config import load_config
 from app.logging_setup import setup_logging
 from app.scheduler import WbUpdateScheduler
 from app.services.insight_engine import InsightEngine
+from app.services.personal_spp_auto_collector import PersonalSppAutoCollector
 from app.services.stock_arrival_detector import StockArrivalDetector
 from app.storage import (
     Database,
@@ -106,6 +107,12 @@ async def run() -> None:
             delta_threshold=config.stock_arrival_delta_threshold,
         )
 
+        personal_spp_collector = PersonalSppAutoCollector(
+            personal_spp_repo=personal_spp_repo,
+            business_repository=business_repository,
+            meta_repository=meta_repository,
+        )
+
         updater = WbUpdateScheduler(
             config=config,
             wb_client=wb_client,
@@ -119,6 +126,7 @@ async def run() -> None:
             tracked_article_repository=tracked_article_repository,
             decision_snapshot_repository=decision_snapshot_repo,
             stock_arrival_detector=stock_arrival_detector,
+            personal_spp_auto_collector=personal_spp_collector,
             business_repository=business_repository,
             seller_client=seller_client,
             insight_engine=insight_engine,
@@ -136,6 +144,7 @@ async def run() -> None:
             missed_deal_repo=missed_deal_repo,
             decision_snapshot_repo=decision_snapshot_repo,
             stock_arrival_repo=stock_arrival_repo,
+            personal_spp_collector=personal_spp_collector,
             insight_engine=insight_engine,
             updater=updater,
         )
