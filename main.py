@@ -82,6 +82,7 @@ async def run() -> None:
             backoff_seconds=config.wb_http_backoff_seconds,
             rate_limit_rps=config.wb_rate_limit_rps,
             max_pages=config.wb_max_pages,
+            exclude_keywords=config.top10_exclude_keywords,
         )
 
         seller_client: SellerClient | None = None

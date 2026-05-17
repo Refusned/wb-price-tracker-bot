@@ -40,7 +40,11 @@ def get_router(
         if stale:
             updater.trigger_background_update(reason="stale_cache_on_top10")
 
-        items = await item_repository.get_top_items(min_price_rub=min_price, limit=10)
+        items = await item_repository.get_top_items(
+            min_price_rub=min_price,
+            limit=10,
+            exclude_keywords=config.top10_exclude_keywords,
+        )
 
         if not items:
             text = f"В наличии от {format_price_rub(min_price)} не найдено"
