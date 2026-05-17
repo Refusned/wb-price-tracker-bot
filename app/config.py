@@ -210,7 +210,9 @@ def load_config() -> AppConfig:
         callback_signing_secret=os.getenv("CALLBACK_SIGNING_SECRET", "").strip(),
         stock_arrival_delta_threshold=_to_int("STOCK_ARRIVAL_DELTA_THRESHOLD", 5),
         top10_exclude_keywords=_parse_exclude_keywords(
-            os.getenv("TOP10_EXCLUDE_KEYWORDS", "жёлт,желт,yellow")
+            # Default excludes Yandex Station Midi colors that the owner doesn't
+            # trade. WB tags them as "оранжевая"/"оранжевый", not "жёлтая".
+            os.getenv("TOP10_EXCLUDE_KEYWORDS", "оранж,orange,жёлт,желт,yellow")
         ),
         event_alerts_enabled=_to_bool("EVENT_ALERTS_ENABLED", True),
     )
