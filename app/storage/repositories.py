@@ -50,19 +50,15 @@ class ItemRepository:
         limit: int = 10,
         exclude_keywords: list[str] | None = None,
     ) -> list[Item]:
-        # Day 17: support post-storage filtering — already-stored items that
-        # match exclude_keywords (e.g., yellow speakers) are hidden from /top10
-        # without requiring a full DB cleanup. New ingestion is filtered at
-        # WildberriesClient level so this is mostly belt-and-suspenders.
-        params: list[object] = [min_price_rub]
-        where = ["in_stock = 1", "price_rub >= ?"]
-        if exclude_keywords:
-            for kw in exclude_keywords:
-                where.append("LOWER(name) NOT LIKE ?")
-                params.append(f"%{kw.lower()}%")
-        params.append(limit)
+        # Day 17 hotfix: SQLite's LOWER() is ASCII-only by default, so a
+        # WHERE LOWER(name) NOT LIKE '%оранж%' filter silently misses
+        # capital-Cyrillic matches like "Оранжевый". Apply the exclude
+        # filter in Python where str.lower() handles Unicode correctly.
+        # Fetch ~3x limit raw rows then filter; for typical /top10 limits
+        # and a small items catalog this is bounded.
+        fetch_limit = max(limit * 5, 50) if exclude_keywords else limit
         rows = await self._db.fetchall(
-            f"""
+            """
             SELECT
                 nm_id,
                 name,
@@ -72,13 +68,20 @@ class ItemRepository:
                 stock_qty,
                 url
             FROM items
-            WHERE {' AND '.join(where)}
+            WHERE in_stock = 1 AND price_rub >= ?
             ORDER BY price_rub ASC
             LIMIT ?
             """,
-            tuple(params),
+            (min_price_rub, fetch_limit),
         )
-        return [item_from_row(row) for row in rows]
+        items = [item_from_row(row) for row in rows]
+        if exclude_keywords:
+            keywords_lc = [kw.lower() for kw in exclude_keywords if kw.strip()]
+            items = [
+                item for item in items
+                if not any(kw in item.name.lower() for kw in keywords_lc)
+            ]
+        return items[:limit]
 
 
 class MetaRepository:
