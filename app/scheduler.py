@@ -446,8 +446,20 @@ class WbUpdateScheduler:
                     len(stocks),
                 )
 
-                if notify:
+                # Day 17: gate per-order/per-sale notifications behind config
+                # flag. User complained about spam — they don't need a DM for
+                # every order. Price-drop alerts (the actually useful signal)
+                # come from a different path and are not affected.
+                # Still mark events as notified so they don't accumulate.
+                event_alerts_enabled = getattr(self._config, "event_alerts_enabled", True)
+                if notify and event_alerts_enabled:
                     await self._send_event_alerts()
+                elif notify:
+                    # Silently mark new orders/sales as notified to keep
+                    # the get_unnotified_* queries efficient.
+                    if self._business_repository is not None:
+                        await self._business_repository.mark_all_orders_notified()
+                        await self._business_repository.mark_all_sales_notified()
                 return True
             except Exception as exc:
                 self._logger.exception("Seller update failed: %s", exc)

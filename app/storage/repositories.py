@@ -44,9 +44,25 @@ class ItemRepository:
         row = await self._db.fetchone("SELECT COUNT(*) AS c FROM items")
         return int(row["c"]) if row else 0
 
-    async def get_top_items(self, min_price_rub: int, limit: int = 10) -> list[Item]:
+    async def get_top_items(
+        self,
+        min_price_rub: int,
+        limit: int = 10,
+        exclude_keywords: list[str] | None = None,
+    ) -> list[Item]:
+        # Day 17: support post-storage filtering — already-stored items that
+        # match exclude_keywords (e.g., yellow speakers) are hidden from /top10
+        # without requiring a full DB cleanup. New ingestion is filtered at
+        # WildberriesClient level so this is mostly belt-and-suspenders.
+        params: list[object] = [min_price_rub]
+        where = ["in_stock = 1", "price_rub >= ?"]
+        if exclude_keywords:
+            for kw in exclude_keywords:
+                where.append("LOWER(name) NOT LIKE ?")
+                params.append(f"%{kw.lower()}%")
+        params.append(limit)
         rows = await self._db.fetchall(
-            """
+            f"""
             SELECT
                 nm_id,
                 name,
@@ -56,11 +72,11 @@ class ItemRepository:
                 stock_qty,
                 url
             FROM items
-            WHERE in_stock = 1 AND price_rub >= ?
+            WHERE {' AND '.join(where)}
             ORDER BY price_rub ASC
             LIMIT ?
             """,
-            (min_price_rub, limit),
+            tuple(params),
         )
         return [item_from_row(row) for row in rows]
 

@@ -59,6 +59,20 @@ def _parse_query_variants(raw_value: str | None) -> list[str]:
     return variants
 
 
+def _parse_exclude_keywords(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for chunk in raw.split(","):
+        kw = chunk.strip().lower()
+        if not kw or kw in seen:
+            continue
+        seen.add(kw)
+        result.append(kw)
+    return result
+
+
 def _build_default_query_variants(base_query: str) -> list[str]:
     query = base_query.strip()
     if not query:
@@ -116,6 +130,14 @@ class AppConfig:
     # Stock arrival detector: minimum positive delta in SUM(quantity+in_way_to+in_way_from)
     # per nm_id to trigger a "what did you pay?" prompt. Default 5 units.
     stock_arrival_delta_threshold: int
+    # Keywords (lowercase, comma-separated in env) to EXCLUDE from /top10 and
+    # all price scanning. Match by substring on item.name.lower(). Use for
+    # filtering out specific colors/variants you don't trade.
+    # Example: TOP10_EXCLUDE_KEYWORDS=жёлт,желт,yellow
+    top10_exclude_keywords: list[str]
+    # If False, suppress per-order and per-sale Telegram notifications
+    # (the "you got a new order!" spam). Price-drop alerts are NOT affected.
+    event_alerts_enabled: bool
 
     @property
     def owner_mode_enabled(self) -> bool:
@@ -187,4 +209,8 @@ def load_config() -> AppConfig:
         price_history_retention_days=_to_int("PRICE_HISTORY_RETENTION_DAYS", 120),
         callback_signing_secret=os.getenv("CALLBACK_SIGNING_SECRET", "").strip(),
         stock_arrival_delta_threshold=_to_int("STOCK_ARRIVAL_DELTA_THRESHOLD", 5),
+        top10_exclude_keywords=_parse_exclude_keywords(
+            os.getenv("TOP10_EXCLUDE_KEYWORDS", "жёлт,желт,yellow")
+        ),
+        event_alerts_enabled=_to_bool("EVENT_ALERTS_ENABLED", True),
     )
