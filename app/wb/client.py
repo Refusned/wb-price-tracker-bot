@@ -25,6 +25,7 @@ class WildberriesClient:
         rate_limit_rps: float = 1.5,
         max_pages: int = 3,
         exclude_keywords: list[str] | None = None,
+        include_keywords: list[str] | None = None,
     ) -> None:
         self._session = session
         self._timeout_seconds = timeout_seconds
@@ -33,6 +34,7 @@ class WildberriesClient:
         self._max_pages = max(1, max_pages)
         self._min_interval = 1.0 / max(rate_limit_rps, 0.1)
         self._exclude_keywords = [k.lower() for k in (exclude_keywords or []) if k.strip()]
+        self._include_keywords = [k.lower() for k in (include_keywords or []) if k.strip()]
 
         self._logger = logging.getLogger(self.__class__.__name__)
         self._rate_lock = asyncio.Lock()
@@ -216,7 +218,9 @@ class WildberriesClient:
     async def _fetch_page_items(self, endpoint: SearchEndpoint, *, query: str, page: int) -> list[Item]:
         payload = await self._request_endpoint_page(endpoint, query=query, page=page)
         items = self._filter_relevant_items(
-                parse_products(payload), query=query, exclude_keywords=self._exclude_keywords,
+                parse_products(payload), query=query,
+                exclude_keywords=self._exclude_keywords,
+                include_keywords=self._include_keywords,
             )
         if items:
             return items
@@ -230,7 +234,9 @@ class WildberriesClient:
                 page=page,
             )
             routed_items = self._filter_relevant_items(
-                parse_products(routed_payload), query=query, exclude_keywords=self._exclude_keywords,
+                parse_products(routed_payload), query=query,
+                exclude_keywords=self._exclude_keywords,
+                include_keywords=self._include_keywords,
             )
             if routed_items:
                 self._logger.debug(
@@ -385,14 +391,24 @@ class WildberriesClient:
 
     @staticmethod
     def _filter_relevant_items(
-        items: list[Item], *, query: str, exclude_keywords: list[str] | None = None,
+        items: list[Item],
+        *,
+        query: str,
+        exclude_keywords: list[str] | None = None,
+        include_keywords: list[str] | None = None,
     ) -> list[Item]:
-        # First pass: exclude items whose name contains any blocked keyword
-        # (e.g., color filters configured via TOP10_EXCLUDE_KEYWORDS).
+        # First pass: exclude items whose name contains any blocked keyword.
         if exclude_keywords:
             items = [
                 item for item in items
                 if not any(kw in item.name.lower() for kw in exclude_keywords)
+            ]
+        # Second pass: if include_keywords set (strict whitelist), item.name
+        # MUST contain at least one. Items without any color word lose here.
+        if include_keywords:
+            items = [
+                item for item in items
+                if any(kw in item.name.lower() for kw in include_keywords)
             ]
 
         tokens = [token for token in re.findall(r"[\w\d]+", query.lower()) if len(token) >= 3]

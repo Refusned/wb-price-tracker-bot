@@ -49,14 +49,13 @@ class ItemRepository:
         min_price_rub: int,
         limit: int = 10,
         exclude_keywords: list[str] | None = None,
+        include_keywords: list[str] | None = None,
     ) -> list[Item]:
-        # Day 17 hotfix: SQLite's LOWER() is ASCII-only by default, so a
-        # WHERE LOWER(name) NOT LIKE '%оранж%' filter silently misses
-        # capital-Cyrillic matches like "Оранжевый". Apply the exclude
-        # filter in Python where str.lower() handles Unicode correctly.
-        # Fetch ~3x limit raw rows then filter; for typical /top10 limits
-        # and a small items catalog this is bounded.
-        fetch_limit = max(limit * 5, 50) if exclude_keywords else limit
+        # SQLite's LOWER() is ASCII-only by default — capital Cyrillic
+        # like "Оранжевый" does NOT lowercase via SQL LOWER(). So we fetch
+        # a wider window then filter in Python (str.lower() is Unicode-safe).
+        has_filter = bool(exclude_keywords or include_keywords)
+        fetch_limit = max(limit * 10, 200) if has_filter else limit
         rows = await self._db.fetchall(
             """
             SELECT
@@ -76,10 +75,16 @@ class ItemRepository:
         )
         items = [item_from_row(row) for row in rows]
         if exclude_keywords:
-            keywords_lc = [kw.lower() for kw in exclude_keywords if kw.strip()]
+            ex_lc = [kw.lower() for kw in exclude_keywords if kw.strip()]
             items = [
                 item for item in items
-                if not any(kw in item.name.lower() for kw in keywords_lc)
+                if not any(kw in item.name.lower() for kw in ex_lc)
+            ]
+        if include_keywords:
+            in_lc = [kw.lower() for kw in include_keywords if kw.strip()]
+            items = [
+                item for item in items
+                if any(kw in item.name.lower() for kw in in_lc)
             ]
         return items[:limit]
 

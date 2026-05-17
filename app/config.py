@@ -135,6 +135,13 @@ class AppConfig:
     # filtering out specific colors/variants you don't trade.
     # Example: TOP10_EXCLUDE_KEYWORDS=жёлт,желт,yellow
     top10_exclude_keywords: list[str]
+    # Keywords (lowercase, comma-separated in env) — if non-empty, item.name
+    # MUST contain at least one to pass /top10 and price scanning. Strict
+    # whitelist mode. Use when you only want specific colors/variants.
+    # Example: TOP10_INCLUDE_KEYWORDS=чёрн,черн,серая,серый,серое,black,grey
+    # When BOTH include and exclude are set, item must match ≥1 include AND
+    # 0 excludes (typical example: include=чёрн,сер + exclude=серебр).
+    top10_include_keywords: list[str]
     # If False, suppress per-order and per-sale Telegram notifications
     # (the "you got a new order!" spam). Price-drop alerts are NOT affected.
     event_alerts_enabled: bool
@@ -210,9 +217,21 @@ def load_config() -> AppConfig:
         callback_signing_secret=os.getenv("CALLBACK_SIGNING_SECRET", "").strip(),
         stock_arrival_delta_threshold=_to_int("STOCK_ARRIVAL_DELTA_THRESHOLD", 5),
         top10_exclude_keywords=_parse_exclude_keywords(
-            # Default excludes Yandex Station Midi colors that the owner doesn't
-            # trade. WB tags them as "оранжевая"/"оранжевый", not "жёлтая".
-            os.getenv("TOP10_EXCLUDE_KEYWORDS", "оранж,orange,жёлт,желт,yellow")
+            # By default no exclude — strict include below covers it.
+            os.getenv("TOP10_EXCLUDE_KEYWORDS", "")
+        ),
+        top10_include_keywords=_parse_exclude_keywords(
+            # Owner trades only black/grey Yandex Station Midi. Strict mode:
+            # item.name.lower() must contain at least one keyword. Items with
+            # no color in name (e.g., "Умная колонка Станция Миди") are
+            # EXCLUDED — owner explicitly said only black/grey.
+            # Russian forms: чёрн/черн cover all declensions of "чёрный".
+            # For grey we list specific forms ("серая","серый","серое") to
+            # avoid matching "серебр-" (silver) which contains "сер".
+            os.getenv(
+                "TOP10_INCLUDE_KEYWORDS",
+                "чёрн,черн,серая,серый,серое,серого,серому,серым,black,grey,gray"
+            )
         ),
         event_alerts_enabled=_to_bool("EVENT_ALERTS_ENABLED", True),
     )

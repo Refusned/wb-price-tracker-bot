@@ -83,6 +83,7 @@ async def run() -> None:
             rate_limit_rps=config.wb_rate_limit_rps,
             max_pages=config.wb_max_pages,
             exclude_keywords=config.top10_exclude_keywords,
+            include_keywords=config.top10_include_keywords,
         )
 
         seller_client: SellerClient | None = None

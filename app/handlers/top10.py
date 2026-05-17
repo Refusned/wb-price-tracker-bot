@@ -44,6 +44,7 @@ def get_router(
             min_price_rub=min_price,
             limit=10,
             exclude_keywords=config.top10_exclude_keywords,
+            include_keywords=config.top10_include_keywords,
         )
 
         if not items:
