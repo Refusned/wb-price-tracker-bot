@@ -43,14 +43,19 @@ class WildberriesClient:
         self._card_last_request_ts = 0.0
         self._card_min_interval = 1.0
 
+        # 2026-05-18: WB tightened anti-bot on search endpoints. Browser-like
+        # headers (Origin/Referer) significantly reduce 429 incidence on
+        # u-search.wb.ru/v18.
         self._headers = {
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8",
             "Connection": "keep-alive",
+            "Origin": "https://www.wildberries.ru",
+            "Referer": "https://www.wildberries.ru/",
             "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/123.0.0.0 Safari/537.36"
+                "Chrome/124.0.0.0 Safari/537.36"
             ),
         }
 
