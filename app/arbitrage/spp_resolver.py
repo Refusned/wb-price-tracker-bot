@@ -1,15 +1,17 @@
-"""Buyer-side personal СПП resolver.
+"""Buyer-side СПП resolver (2026-05-18 model).
 
-Round 4 Plan B: cookie path deferred (card.wb.ru requires PoW). Canonical
-sources for buyer-side СПП:
-    1. PER-NM_ID observation (manual /arb_observe or auto on /buy): exact
-       value if observed within last 24h.
-    2. PER-CATEGORY average across all observations in subject (≥3 samples,
-       within 30 days). Confidence 'medium'.
-    3. Manual category-override via /arb_set_spp <subject> <pct>. NOT
-       implemented in MVP — falls through to skip.
+WB-Скидка (бывш. СПП) is CATEGORY-WIDE, не per-buyer. WB сам финансирует её
+(оферта п. 5.4). Это значит: 1 observation per category достаточно чтобы
+знать ставку для ВСЕЙ категории.
 
-Skip (do NOT alert) if no observation can be resolved with confidence.
+The observed `spp_percent` is COMPOSITE: includes both WB-Скидка категории
+AND owner's WB-Кошелёк bonus (~6%). margin.decompose_composite_spp() splits
+them for accurate buy_price math.
+
+Resolution order:
+  1. Per-nm observation (last 24h, any confidence) — exact composite for THIS sku.
+  2. Per-category AVG (last 30d, ≥1 sample, exclude 'low') — composite for the subject.
+  3. Skip (return None) if no data — never alert with assumed default.
 """
 from __future__ import annotations
 
@@ -23,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class SppResolution:
+    """Composite buyer discount (category_СПП + wallet bonus combined).
+
+    To decompose into category-only, use margin.decompose_composite_spp().
+    """
     spp_percent: float
     source: str        # 'observation' | 'category_avg' | 'manual'
     confidence: str    # 'high' | 'medium' | 'low'
@@ -36,12 +42,8 @@ class PersonalSppResolver:
     async def resolve(
         self, *, nm_id: int, subject_id: int | None,
     ) -> SppResolution | None:
-        """Returns SppResolution or None to signal 'skip — no reliable СПП'.
-
-        Round 4: NO 'default 20%' fallback that alerts (Codex D13). If we
-        can't measure СПП for this category, we don't pretend.
-        """
-        # 1. Exact nm_id observation (last 24h)
+        """Returns composite buyer discount, or None to signal 'skip — no data'."""
+        # 1. Exact per-nm observation (within 24h)
         nm_recent = await self._repo.get_nm_recent_spp(nm_id, hours=24)
         if nm_recent and nm_recent["confidence"] != "low":
             return SppResolution(
@@ -51,25 +53,30 @@ class PersonalSppResolver:
                 note=f"Sampled {nm_recent['observed_at'][:16]}",
             )
 
-        # 2. Category average (need subject_id and ≥3 samples)
+        # 2. Category AVG — valid because WB-СПП is category-wide.
+        # Single-sample is acceptable confidence=medium (СПП varies 21-25%/month
+        # which is well within owner's risk tolerance per his arbitrage model).
         if subject_id is not None:
             cat = await self._repo.get_category_avg_spp(
-                subject_id, days=30, min_samples=3,
+                subject_id, days=30, min_samples=1,
             )
             if cat:
-                # Codex D16 safety: при category fallback вычитаем 3 п.п.
-                # bias safety margin (consrervative — занижаем СПП → margin меньше)
-                conservative_spp = max(0.0, cat["avg_spp"] - 3.0)
-                confidence = "medium" if cat["samples"] >= 5 else "low"
-                # Round 4: skip low confidence
-                if confidence == "low":
-                    return None
+                samples = cat["samples"]
+                # Confidence ladder: 5+ samples = high (variance smoothed),
+                # 2-4 = medium, 1 = medium-but-tagged (single observation
+                # still trustworthy because the value is category-wide).
+                if samples >= 5:
+                    confidence = "high"
+                elif samples >= 2:
+                    confidence = "medium"
+                else:
+                    confidence = "medium"  # 1-sample still acceptable
                 return SppResolution(
-                    spp_percent=conservative_spp,
+                    spp_percent=cat["avg_spp"],
                     source="category_avg",
                     confidence=confidence,
-                    note=f"AVG {cat['avg_spp']:.1f}% over {cat['samples']} samples (-3pp safety)",
+                    note=f"AVG {cat['avg_spp']:.1f}% over {samples} sample(s)",
                 )
 
-        # 3. Skip — no reliable source
+        # 3. No data at all — skip
         return None
