@@ -261,4 +261,9 @@ def get_router(
     async def kb_top(message: Message) -> None:
         await arb_top_cat(message)
 
+    # ── Entry from main menu (top-level button) ─────────────────
+    @router.message(lambda m: m.text == "🎯 Арбитраж")
+    async def kb_open_arb(message: Message) -> None:
+        await arb_root(message)
+
     return router

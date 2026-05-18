@@ -6,7 +6,7 @@ from app.arbitrage import handlers as arbitrage_handlers
 from app.arbitrage.repository import ArbitrageRepository
 from app.arbitrage.scanner import ArbitrageScanner
 from app.config import AppConfig
-from app.handlers import admin, business, common, decisions, margin, missed_deals, purchase_prompts, spp_log, top10
+from app.handlers import admin, business, common, decisions, main_menu, margin, missed_deals, purchase_prompts, spp_log, top10
 from app.scheduler import WbUpdateScheduler
 from app.services.insight_engine import InsightEngine
 from app.services.personal_spp_auto_collector import PersonalSppAutoCollector
@@ -43,6 +43,15 @@ def build_dispatcher(
     arb_scanner: ArbitrageScanner | None = None,
 ) -> Dispatcher:
     dp = Dispatcher()
+
+    # main_menu MUST be registered FIRST — it handles /start and main
+    # reply-keyboard buttons (🎯 Арбитраж / 💰 Финансы / etc.).
+    dp.include_router(
+        main_menu.get_router(
+            config=config,
+            subscriber_repo=subscriber_repository,
+        )
+    )
 
     dp.include_router(
         admin.get_router(
