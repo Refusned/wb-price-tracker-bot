@@ -24,8 +24,10 @@ _COMMON_PARAMS = {
     "lang": "ru",
     "locale": "ru",
     "resultset": "catalog",
-    # We need top cheapest list, so request price-ascending feed by default.
-    "sort": "priceup",
+    # 2026-05-18: u-search.wb.ru/v18 returns 0 products with sort=priceup.
+    # Use popular (verified HTTP 200 + populated products). The /top10
+    # handler sorts client-side by price anyway via min_price_rub filter.
+    "sort": "popular",
     "spp": "30",
     "suppressSpellcheck": "false",
     "inheritFilters": "false",
