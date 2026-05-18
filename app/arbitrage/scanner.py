@@ -34,6 +34,7 @@ from app.arbitrage.formatting import build_alert_message
 from app.arbitrage.margin import (
     MarginBreakdown,
     compute_arbitrage_margin,
+    decompose_composite_spp,
     estimate_hold_days_from_feedbacks,
     passes_threshold,
 )
@@ -279,16 +280,14 @@ class ArbitrageScanner:
         feedbacks = int(prod.get("feedbacks") or 0)
         volume_l = float(prod.get("volume") or 1)
 
-        # Resolve buyer-side СПП
+        # Resolve buyer-side СПП.
+        # 2026-05-18 ground-truth update: WB-Скидка (бывш. СПП) is category-WIDE
+        # (one value applied to every buyer in the subject), funded by WB at
+        # its own expense per offer 5.4. So category_avg observations are
+        # JUST AS VALID as per-nm — we removed the old gating that blocked it.
         spp = await self._spp.resolve(nm_id=nm_id, subject_id=subject_id)
         if spp is None:
-            return None  # skip — no reliable СПП
-
-        # Codex /review fix #2: only PER-NM observation is trustworthy for
-        # alerting on real money. category_avg is a population statistic and
-        # cannot tell us the SPP on THIS specific SKU. We still RECORD the
-        # candidate (for analytics + cohort signal) but never ALERT on it.
-        alertable_spp = spp.source == "observation" and spp.confidence != "low"
+            return None  # skip — no observation data at all
 
         # Tariffs lookup
         commission_pct = None
@@ -296,23 +295,24 @@ class ArbitrageScanner:
             commission_pct = await self._tariffs.get_commission_fbs(subject_id)
         logistics_rub = await self._tariffs.estimate_logistics_for_volume(volume_l)
 
-        # Codex /review fix #5: if both tariffs missing, don't trust the
-        # margin enough to alert (fallback 16% commission + 500₽ logistics
-        # may be wildly wrong for a new category we've never traded).
-        tariffs_unverified = commission_pct is None and logistics_rub is None
-
         # Hold time proxy from feedbacks
         expected_hold_days = estimate_hold_days_from_feedbacks(feedbacks)
 
-        # Use P25 as expected sell price (Round 3 D16)
-        listed_price = market_p25 if market_p25 > 0 else market_price_rub
+        # Decompose observed composite SPP (= category_СПП + wallet_bonus
+        # baked together) into category_only. Wallet is applied separately
+        # to buy_price in compute_arbitrage_margin.
+        wallet_pct = self._config.arbitrage_wallet_bonus_pct
+        category_spp_pct = decompose_composite_spp(spp.spp_percent, wallet_pct=wallet_pct)
 
         margin = compute_arbitrage_margin(
             market_price_rub=market_price_rub,
-            personal_buyer_spp_pct=spp.spp_percent,
+            category_spp_pct=category_spp_pct,
+            wallet_bonus_pct=wallet_pct,
             spp_source=spp.source,
             spp_confidence=spp.confidence,
-            listed_price_rub=listed_price,
+            # By default match competitor's implied listed (reverse from
+            # their market price). Owner can override strategy later.
+            listed_price_rub=None,
             commission_pct=commission_pct,
             logistics_rub=logistics_rub,
             acquiring_percent=self._config.profit_acquiring_percent,
@@ -331,7 +331,10 @@ class ArbitrageScanner:
 
         url = f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"
 
-        # Always record candidates (for analytics), only alert if threshold passes
+        # Composite buyer discount (category + wallet) for legacy `spp_percent_used`
+        # display field. Real components stored on candidate via new schema.
+        composite_pct = (1.0 - (1.0 - category_spp_pct / 100.0) * (1.0 - wallet_pct / 100.0)) * 100.0
+
         cand_id = await self._repo.record_candidate(
             nm_id=nm_id,
             query=query_text,
@@ -343,10 +346,10 @@ class ArbitrageScanner:
             market_p25_rub=market_p25,
             market_min_rub=market_min,
             buyer_price_rub=margin.buy_price_rub,
-            spp_percent_used=margin.spp_percent_used,
+            spp_percent_used=composite_pct,
             spp_source=margin.spp_source,
             spp_confidence=margin.spp_confidence,
-            listed_price_rub=margin.listed_price_rub,
+            listed_price_rub=margin.listed_implied_rub,
             commission_pct=margin.commission_pct,
             commission_rub=margin.commission_rub,
             logistics_rub=margin.logistics_rub,
@@ -366,19 +369,13 @@ class ArbitrageScanner:
         if not threshold_ok:
             return False
 
-        # Codex /review fix #2 + #5: alert gating beyond raw threshold.
-        # Even if margin passes, refuse to alert when:
-        #   - SPP is not from a per-nm observation (category_avg too coarse)
-        #   - Tariffs are entirely unverified (silent 16%/500₽ fallback)
-        # Such candidates remain in arb_candidates for analytics and may
-        # surface in /arb_deals, but no real-time Telegram push.
-        if not alertable_spp:
-            logger.info(
-                "ARBITRAGE: nm=%s threshold ok but SPP source=%s — skip alert",
-                nm_id, spp.source,
-            )
-            return False
-        if tariffs_unverified:
+        # 2026-05-18 model update: category_avg IS valid for alert.
+        # WB-Скидка is category-wide, financed by WB (offer 5.4) — not a
+        # per-buyer personal estimate. Removed old per-nm-only gate.
+        # Still skip when both tariffs missing (silent 16%/500₽ unsafe for
+        # categories we've never seen). Confidence='low' already filtered
+        # by passes_threshold.
+        if commission_pct is None and logistics_rub is None:
             logger.info(
                 "ARBITRAGE: nm=%s threshold ok but tariffs unverified — skip alert",
                 nm_id,

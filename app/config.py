@@ -155,6 +155,9 @@ class AppConfig:
     arbitrage_daily_alert_cap: int
     arbitrage_cohort_min_size: int
     arbitrage_default_spp_percent: float
+    # WB-Кошелёк bonus (real discount applied at checkout when paying with
+    # WB Wallet balance). Constant across categories. 6% for active buyers.
+    arbitrage_wallet_bonus_pct: float
     # Path to file with buyer cookie (hot-reloaded; / arb_set_cookie command).
     # Empty string → cookie path disabled, only manual observations used.
     wb_buyer_cookie_path: str
@@ -258,6 +261,7 @@ def load_config() -> AppConfig:
         arbitrage_daily_alert_cap=_to_int("ARBITRAGE_DAILY_ALERT_CAP", 30),
         arbitrage_cohort_min_size=_to_int("ARBITRAGE_COHORT_MIN_SIZE", 5),
         arbitrage_default_spp_percent=_to_float("ARBITRAGE_DEFAULT_SPP_PERCENT", 20.0),
+        arbitrage_wallet_bonus_pct=_to_float("ARBITRAGE_WALLET_BONUS_PCT", 6.0),
         wb_buyer_cookie_path=os.getenv("WB_BUYER_COOKIE_PATH", "data/wb_buyer_cookie.txt"),
         wb_buyer_dest_param=_to_int("WB_BUYER_DEST_PARAM", -1257786),
     )
