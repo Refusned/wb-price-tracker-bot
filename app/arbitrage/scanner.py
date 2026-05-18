@@ -83,35 +83,60 @@ class ArbitrageScanner:
         await self._refresh_own_nm_cache()
 
         total_candidates = 0
-        total_alerted = 0
+        new_alerts_this_scan = 0
         daily_cap = self._config.arbitrage_daily_alert_cap
+
+        # /review fix: daily cap должен быть TRULY daily (24h rolling), не per-scan.
+        # Без этого scanner раз в 10 мин может отправить cap × 144 alerts/day.
+        already_alerted_today = await self._repo.alerts_today_count()
+        if already_alerted_today >= daily_cap:
+            logger.info(
+                "ARBITRAGE: daily cap %d already reached (%d alerts in last 24h), skip scan",
+                daily_cap, already_alerted_today,
+            )
+            return {"queries": len(queries), "candidates": 0, "alerted": 0}
 
         for q in queries:
             try:
-                c, a = await self._scan_query(q, daily_cap=daily_cap, alerted_today=total_alerted)
+                effective_alerted = already_alerted_today + new_alerts_this_scan
+                c, a = await self._scan_query(
+                    q, daily_cap=daily_cap, alerted_today=effective_alerted,
+                )
                 total_candidates += c
-                total_alerted += a
-                if total_alerted >= daily_cap:
-                    logger.info("ARBITRAGE: daily alert cap %d reached", daily_cap)
+                new_alerts_this_scan += a
+                if already_alerted_today + new_alerts_this_scan >= daily_cap:
+                    logger.info(
+                        "ARBITRAGE: daily alert cap %d reached (24h total)", daily_cap,
+                    )
                     break
             except Exception:
                 logger.exception("ARBITRAGE: scan_query failed for %r", q.get("query"))
 
         logger.info(
-            "ARBITRAGE: scan_once done queries=%d candidates=%d alerted=%d",
-            len(queries), total_candidates, total_alerted,
+            "ARBITRAGE: scan_once done queries=%d candidates=%d alerted=%d (24h total=%d)",
+            len(queries), total_candidates, new_alerts_this_scan,
+            already_alerted_today + new_alerts_this_scan,
         )
         return {
             "queries": len(queries),
             "candidates": total_candidates,
-            "alerted": total_alerted,
+            "alerted": new_alerts_this_scan,
         }
 
     async def _scan_query(
         self, q: dict, *, daily_cap: int, alerted_today: int,
     ) -> tuple[int, int]:
+        """Per-query scan with subject-grouped cohort metrics.
+
+        Codex /review fix #1: WB search returns mixed categories (e.g.
+        "Робот пылесос" → пылесосы + фильтры + аксессуары). Cohort metrics
+        computed across all results give garbage P25 anchor. We now group
+        products by subjectId and only scan within the DOMINANT subject
+        (or the subject explicitly tied to the query).
+        """
         query_text = q["query"]
         query_id = q["id"]
+        target_subject_id = q.get("subject_id")
         try:
             products = await self._wb.search_for_arbitrage_raw(query_text, max_pages=2)
         except Exception:
@@ -127,8 +152,35 @@ class ArbitrageScanner:
             await self._repo.mark_scanned(query_id, len(products))
             return (0, 0)
 
-        # Cohort metrics from public prices (salePriceU in kopecks → rub)
-        prices_rub = [_parse_price_rub(p) for p in products]
+        # Group products by subjectId to find dominant subject for cohort.
+        # Without this filter, P25/median across mixed subjects = garbage.
+        by_subject: dict[int, list[dict]] = {}
+        for p in products:
+            sid = p.get("subjectId")
+            if isinstance(sid, int):
+                by_subject.setdefault(sid, []).append(p)
+
+        if not by_subject:
+            logger.warning("ARBITRAGE: %r no products with subjectId, skip", query_text)
+            await self._repo.mark_scanned(query_id, 0)
+            return (0, 0)
+
+        if target_subject_id and target_subject_id in by_subject:
+            dominant_subject = target_subject_id
+        else:
+            dominant_subject = max(by_subject, key=lambda sid: len(by_subject[sid]))
+
+        focused = by_subject[dominant_subject]
+        if len(focused) < self._config.arbitrage_cohort_min_size:
+            logger.info(
+                "ARBITRAGE: %r dominant subject %d cohort too small (%d), skip",
+                query_text, dominant_subject, len(focused),
+            )
+            await self._repo.mark_scanned(query_id, len(focused))
+            return (0, 0)
+
+        # Cohort metrics from public prices WITHIN dominant subject only.
+        prices_rub = [_parse_price_rub(p) for p in focused]
         prices_rub = [p for p in prices_rub if p > 0]
         if len(prices_rub) < self._config.arbitrage_cohort_min_size:
             await self._repo.mark_scanned(query_id, len(prices_rub))
@@ -139,11 +191,16 @@ class ArbitrageScanner:
         market_p25 = int(prices_rub[len(prices_rub) // 4])
         market_min = int(prices_rub[0])
         cohort_size = len(prices_rub)
+        logger.info(
+            "ARBITRAGE: %r → subject %d, cohort=%d, P25=%d₽, median=%d₽",
+            query_text, dominant_subject, cohort_size, market_p25, market_median,
+        )
 
         candidates_count = 0
         alerted_count = 0
 
-        for prod in products:
+        # Only iterate products in dominant subject — not the noisy mix.
+        for prod in focused:
             if alerted_today + alerted_count >= daily_cap:
                 break
             try:
@@ -191,7 +248,9 @@ class ArbitrageScanner:
             return None
 
         subject_id = prod.get("subjectId") if isinstance(prod.get("subjectId"), int) else None
-        subject_name = None  # filled below if available
+        # /review fix: extract subjectName from raw payload for /arb_my_spp display.
+        # Falls back to None if WB omits it (then /arb_my_spp shows '?').
+        subject_name = (prod.get("subjectName") or "").strip() or None
         name = (prod.get("name") or "").strip() or None
         brand = (prod.get("brand") or "").strip() or None
         feedbacks = int(prod.get("feedbacks") or 0)
@@ -202,11 +261,22 @@ class ArbitrageScanner:
         if spp is None:
             return None  # skip — no reliable СПП
 
+        # Codex /review fix #2: only PER-NM observation is trustworthy for
+        # alerting on real money. category_avg is a population statistic and
+        # cannot tell us the SPP on THIS specific SKU. We still RECORD the
+        # candidate (for analytics + cohort signal) but never ALERT on it.
+        alertable_spp = spp.source == "observation" and spp.confidence != "low"
+
         # Tariffs lookup
         commission_pct = None
         if subject_id is not None:
             commission_pct = await self._tariffs.get_commission_fbs(subject_id)
         logistics_rub = await self._tariffs.estimate_logistics_for_volume(volume_l)
+
+        # Codex /review fix #5: if both tariffs missing, don't trust the
+        # margin enough to alert (fallback 16% commission + 500₽ logistics
+        # may be wildly wrong for a new category we've never traded).
+        tariffs_unverified = commission_pct is None and logistics_rub is None
 
         # Hold time proxy from feedbacks
         expected_hold_days = estimate_hold_days_from_feedbacks(feedbacks)
@@ -273,6 +343,25 @@ class ArbitrageScanner:
         if not threshold_ok:
             return False
 
+        # Codex /review fix #2 + #5: alert gating beyond raw threshold.
+        # Even if margin passes, refuse to alert when:
+        #   - SPP is not from a per-nm observation (category_avg too coarse)
+        #   - Tariffs are entirely unverified (silent 16%/500₽ fallback)
+        # Such candidates remain in arb_candidates for analytics and may
+        # surface in /arb_deals, but no real-time Telegram push.
+        if not alertable_spp:
+            logger.info(
+                "ARBITRAGE: nm=%s threshold ok but SPP source=%s — skip alert",
+                nm_id, spp.source,
+            )
+            return False
+        if tariffs_unverified:
+            logger.info(
+                "ARBITRAGE: nm=%s threshold ok but tariffs unverified — skip alert",
+                nm_id,
+            )
+            return False
+
         # Cooldown: don't re-alert same nm_id within N hours
         if await self._repo.recently_alerted(nm_id, hours=self._config.arbitrage_alert_cooldown_hours):
             return False
@@ -321,10 +410,21 @@ class ArbitrageScanner:
 def _parse_price_rub(prod: dict) -> int:
     """Extract sale_price in rubles from raw WB product dict.
 
-    WB returns prices in kopecks. salePriceU = after seller discount. priceU = base.
+    WB returns prices in kopecks (verified on real payload: priceU=267600
+    matches 33% discount on retail 2676₽ vs salePriceU=177400 = 1774₽).
+    salePriceU = after seller discount. priceU = base.
+
+    Returns 0 on missing/unparseable. Logs warning to detect WB API drift —
+    if a scan ends up with mostly 0s, WB likely changed the encoding.
     """
-    raw = prod.get("salePriceU") or prod.get("priceU") or 0
+    raw = prod.get("salePriceU") or prod.get("priceU")
+    if raw is None or raw == 0:
+        return 0
     try:
         return int(raw) // 100
     except (TypeError, ValueError):
+        logger.warning(
+            "ARBITRAGE: unparseable price for nm=%s salePriceU=%r priceU=%r",
+            prod.get("id"), prod.get("salePriceU"), prod.get("priceU"),
+        )
         return 0
