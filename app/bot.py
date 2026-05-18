@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from aiogram import Dispatcher
 
+from app.arbitrage import handlers as arbitrage_handlers
+from app.arbitrage.repository import ArbitrageRepository
+from app.arbitrage.scanner import ArbitrageScanner
 from app.config import AppConfig
 from app.handlers import admin, business, common, decisions, margin, missed_deals, purchase_prompts, spp_log, top10
 from app.scheduler import WbUpdateScheduler
@@ -36,6 +39,8 @@ def build_dispatcher(
     personal_spp_collector: PersonalSppAutoCollector | None,
     insight_engine: InsightEngine | None,
     updater: WbUpdateScheduler,
+    arb_repo: ArbitrageRepository | None = None,
+    arb_scanner: ArbitrageScanner | None = None,
 ) -> Dispatcher:
     dp = Dispatcher()
 
@@ -120,6 +125,16 @@ def build_dispatcher(
                 insight_engine=insight_engine,
                 updater=updater,
                 decision_snapshot_repo=decision_snapshot_repo,
+            )
+        )
+
+    if arb_repo is not None and arb_scanner is not None and config.arbitrage_enabled:
+        dp.include_router(
+            arbitrage_handlers.get_router(
+                config=config,
+                arb_repo=arb_repo,
+                scanner=arb_scanner,
+                subscriber_repo=subscriber_repository,
             )
         )
 

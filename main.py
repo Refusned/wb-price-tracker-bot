@@ -8,6 +8,11 @@ import aiohttp
 import certifi
 from aiogram import Bot
 
+from app.arbitrage.repository import ArbitrageRepository
+from app.arbitrage.scanner import ArbitrageScanner
+from app.arbitrage.spp_resolver import PersonalSppResolver
+from app.arbitrage.tariffs_cache import TariffsCache
+from app.arbitrage.tariffs_repository import TariffsRepository
 from app.bot import build_dispatcher
 from app.config import load_config
 from app.logging_setup import setup_logging
@@ -59,6 +64,8 @@ async def run() -> None:
     missed_deal_repo = MissedDealRepository(database)
     decision_snapshot_repo = DecisionSnapshotRepository(database)
     stock_arrival_repo = StockArrivalRepository(database)
+    arb_repo = ArbitrageRepository(database)
+    arb_tariffs_repo = TariffsRepository(database)
 
     await settings_repository.ensure_defaults(config.min_price_rub)
     await settings_repository.ensure_margin_defaults(
@@ -115,6 +122,30 @@ async def run() -> None:
             meta_repository=meta_repository,
         )
 
+        # ── Day 18+: arbitrage scanner wiring ──────────────────────
+        arb_scanner: ArbitrageScanner | None = None
+        arb_tariffs_cache: TariffsCache | None = None
+        if config.arbitrage_enabled and config.wb_seller_api_key:
+            arb_tariffs_cache = TariffsCache(
+                session=http_session,
+                seller_api_key=config.wb_seller_api_key,
+                tariffs_repo=arb_tariffs_repo,
+            )
+            arb_spp_resolver = PersonalSppResolver(arb_repo)
+            arb_scanner = ArbitrageScanner(
+                config=config,
+                wb_client=wb_client,
+                bot=bot,
+                arb_repo=arb_repo,
+                tariffs_repo=arb_tariffs_repo,
+                spp_resolver=arb_spp_resolver,
+                business_repo=business_repository,
+                subscriber_repo=subscriber_repository,
+            )
+            logger.info("Arbitrage scanner enabled (Day 18+)")
+        elif config.arbitrage_enabled:
+            logger.warning("ARBITRAGE_ENABLED=true but WB_SELLER_API_KEY is empty — scanner disabled")
+
         updater = WbUpdateScheduler(
             config=config,
             wb_client=wb_client,
@@ -132,6 +163,8 @@ async def run() -> None:
             business_repository=business_repository,
             seller_client=seller_client,
             insight_engine=insight_engine,
+            arbitrage_scanner=arb_scanner,
+            tariffs_cache=arb_tariffs_cache,
         )
 
         dispatcher = build_dispatcher(
@@ -149,6 +182,8 @@ async def run() -> None:
             personal_spp_collector=personal_spp_collector,
             insight_engine=insight_engine,
             updater=updater,
+            arb_repo=arb_repo,
+            arb_scanner=arb_scanner,
         )
 
         await updater.start()

@@ -1,0 +1,330 @@
+"""ArbitrageScanner: main orchestrator for the autonomous WB→WB scanner.
+
+Round 4 paradigm: category-first. Each enabled query brings a cohort of SKUs
+from the same WB subject; scanner ranks them by margin and pushes alerts for
+deals passing the canonical threshold.
+
+Flow per scan_once():
+    1. Load enabled arb_queries.
+    2. For each query: search_for_arbitrage_raw() → ~100 raw products.
+    3. Build cohort metrics (median, P25, min) from cohort prices.
+    4. Per item:
+       a. Resolve buyer-side СПП (PersonalSppResolver).
+       b. If СПП unresolvable → skip (no default alert).
+       c. Lookup tariffs (commission for subject, logistics by volume).
+       d. Compute margin via compute_arbitrage_margin.
+       e. Threshold check + alert dedup + daily cap.
+    5. Send Telegram alerts via bot, mark_alerted.
+
+Exclude rules (Round 4):
+    - SKU which appears in own_sales / purchases last 90 days (self-listing).
+    - cohort_size < ARBITRAGE_COHORT_MIN_SIZE.
+    - confidence='low' on СПП.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import statistics
+from datetime import datetime, timezone
+
+from aiogram import Bot
+
+from app.arbitrage.formatting import build_alert_message
+from app.arbitrage.margin import (
+    MarginBreakdown,
+    compute_arbitrage_margin,
+    estimate_hold_days_from_feedbacks,
+    passes_threshold,
+)
+from app.arbitrage.repository import ArbitrageRepository
+from app.arbitrage.spp_resolver import PersonalSppResolver
+from app.arbitrage.tariffs_repository import TariffsRepository
+from app.config import AppConfig
+from app.storage.business_repository import BusinessRepository
+from app.storage.repositories import SubscriberRepository
+from app.wb.client import WildberriesClient
+
+logger = logging.getLogger(__name__)
+
+
+class ArbitrageScanner:
+    def __init__(
+        self,
+        *,
+        config: AppConfig,
+        wb_client: WildberriesClient,
+        bot: Bot,
+        arb_repo: ArbitrageRepository,
+        tariffs_repo: TariffsRepository,
+        spp_resolver: PersonalSppResolver,
+        business_repo: BusinessRepository,
+        subscriber_repo: SubscriberRepository,
+    ) -> None:
+        self._config = config
+        self._wb = wb_client
+        self._bot = bot
+        self._repo = arb_repo
+        self._tariffs = tariffs_repo
+        self._spp = spp_resolver
+        self._business = business_repo
+        self._subs = subscriber_repo
+        self._own_nm_cache: set[int] = set()
+        self._own_nm_cache_at: datetime | None = None
+
+    async def scan_once(self) -> dict[str, int]:
+        """Run a single scan over all enabled queries. Returns summary counts."""
+        queries = await self._repo.list_queries(only_enabled=True)
+        if not queries:
+            logger.debug("ARBITRAGE: no enabled queries")
+            return {"queries": 0, "candidates": 0, "alerted": 0}
+
+        # Refresh own listings cache hourly
+        await self._refresh_own_nm_cache()
+
+        total_candidates = 0
+        total_alerted = 0
+        daily_cap = self._config.arbitrage_daily_alert_cap
+
+        for q in queries:
+            try:
+                c, a = await self._scan_query(q, daily_cap=daily_cap, alerted_today=total_alerted)
+                total_candidates += c
+                total_alerted += a
+                if total_alerted >= daily_cap:
+                    logger.info("ARBITRAGE: daily alert cap %d reached", daily_cap)
+                    break
+            except Exception:
+                logger.exception("ARBITRAGE: scan_query failed for %r", q.get("query"))
+
+        logger.info(
+            "ARBITRAGE: scan_once done queries=%d candidates=%d alerted=%d",
+            len(queries), total_candidates, total_alerted,
+        )
+        return {
+            "queries": len(queries),
+            "candidates": total_candidates,
+            "alerted": total_alerted,
+        }
+
+    async def _scan_query(
+        self, q: dict, *, daily_cap: int, alerted_today: int,
+    ) -> tuple[int, int]:
+        query_text = q["query"]
+        query_id = q["id"]
+        try:
+            products = await self._wb.search_for_arbitrage_raw(query_text, max_pages=2)
+        except Exception:
+            logger.exception("ARBITRAGE: WB search failed for %r", query_text)
+            await self._repo.mark_scanned(query_id, 0)
+            return (0, 0)
+
+        if len(products) < self._config.arbitrage_cohort_min_size:
+            logger.info(
+                "ARBITRAGE: %r cohort too small (%d < %d), skip",
+                query_text, len(products), self._config.arbitrage_cohort_min_size,
+            )
+            await self._repo.mark_scanned(query_id, len(products))
+            return (0, 0)
+
+        # Cohort metrics from public prices (salePriceU in kopecks → rub)
+        prices_rub = [_parse_price_rub(p) for p in products]
+        prices_rub = [p for p in prices_rub if p > 0]
+        if len(prices_rub) < self._config.arbitrage_cohort_min_size:
+            await self._repo.mark_scanned(query_id, len(prices_rub))
+            return (0, 0)
+
+        prices_rub.sort()
+        market_median = int(statistics.median(prices_rub))
+        market_p25 = int(prices_rub[len(prices_rub) // 4])
+        market_min = int(prices_rub[0])
+        cohort_size = len(prices_rub)
+
+        candidates_count = 0
+        alerted_count = 0
+
+        for prod in products:
+            if alerted_today + alerted_count >= daily_cap:
+                break
+            try:
+                hit = await self._evaluate_product(
+                    prod,
+                    query_text=query_text,
+                    market_median=market_median,
+                    market_p25=market_p25,
+                    market_min=market_min,
+                    cohort_size=cohort_size,
+                )
+            except Exception:
+                logger.exception("ARBITRAGE: evaluate failed for nm=%s", prod.get("id"))
+                continue
+            if hit is None:
+                continue
+            candidates_count += 1
+            if hit:
+                alerted_count += 1
+
+        await self._repo.mark_scanned(query_id, candidates_count)
+        return (candidates_count, alerted_count)
+
+    async def _evaluate_product(
+        self,
+        prod: dict,
+        *,
+        query_text: str,
+        market_median: int,
+        market_p25: int,
+        market_min: int,
+        cohort_size: int,
+    ) -> bool | None:
+        """Returns True if alerted, False if candidate-not-alerted, None if skipped."""
+        nm_id = prod.get("id")
+        if not isinstance(nm_id, int) or nm_id <= 0:
+            return None
+
+        # Exclude self-listings (Round 4 D34)
+        if nm_id in self._own_nm_cache:
+            return None
+
+        market_price_rub = _parse_price_rub(prod)
+        if market_price_rub <= 0:
+            return None
+
+        subject_id = prod.get("subjectId") if isinstance(prod.get("subjectId"), int) else None
+        subject_name = None  # filled below if available
+        name = (prod.get("name") or "").strip() or None
+        brand = (prod.get("brand") or "").strip() or None
+        feedbacks = int(prod.get("feedbacks") or 0)
+        volume_l = float(prod.get("volume") or 1)
+
+        # Resolve buyer-side СПП
+        spp = await self._spp.resolve(nm_id=nm_id, subject_id=subject_id)
+        if spp is None:
+            return None  # skip — no reliable СПП
+
+        # Tariffs lookup
+        commission_pct = None
+        if subject_id is not None:
+            commission_pct = await self._tariffs.get_commission_fbs(subject_id)
+        logistics_rub = await self._tariffs.estimate_logistics_for_volume(volume_l)
+
+        # Hold time proxy from feedbacks
+        expected_hold_days = estimate_hold_days_from_feedbacks(feedbacks)
+
+        # Use P25 as expected sell price (Round 3 D16)
+        listed_price = market_p25 if market_p25 > 0 else market_price_rub
+
+        margin = compute_arbitrage_margin(
+            market_price_rub=market_price_rub,
+            personal_buyer_spp_pct=spp.spp_percent,
+            spp_source=spp.source,
+            spp_confidence=spp.confidence,
+            listed_price_rub=listed_price,
+            commission_pct=commission_pct,
+            logistics_rub=logistics_rub,
+            acquiring_percent=self._config.profit_acquiring_percent,
+            tax_percent=self._config.profit_tax_percent,
+            return_rate_percent=self._config.return_rate_percent,
+            storage_cost_per_day_rub=self._config.storage_cost_per_day_rub,
+            expected_hold_days=expected_hold_days,
+        )
+
+        threshold_ok = passes_threshold(
+            margin,
+            min_pprd_percent=self._config.arbitrage_min_pprd_percent,
+            min_profit_rub=self._config.arbitrage_min_profit_rub,
+            min_margin_percent=self._config.arbitrage_min_margin_percent,
+        )
+
+        url = f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"
+
+        # Always record candidates (for analytics), only alert if threshold passes
+        cand_id = await self._repo.record_candidate(
+            nm_id=nm_id,
+            query=query_text,
+            subject_id=subject_id,
+            name=name,
+            brand=brand,
+            market_price_rub=market_price_rub,
+            market_median_rub=market_median,
+            market_p25_rub=market_p25,
+            market_min_rub=market_min,
+            buyer_price_rub=margin.buy_price_rub,
+            spp_percent_used=margin.spp_percent_used,
+            spp_source=margin.spp_source,
+            spp_confidence=margin.spp_confidence,
+            listed_price_rub=margin.listed_price_rub,
+            commission_pct=margin.commission_pct,
+            commission_rub=margin.commission_rub,
+            logistics_rub=margin.logistics_rub,
+            acquiring_rub=margin.acquiring_rub,
+            return_reserve_rub=margin.return_reserve_rub,
+            tax_rub=margin.tax_rub,
+            holding_rub=margin.holding_rub,
+            revenue_after_wb_rub=margin.revenue_after_wb_rub,
+            margin_rub=margin.margin_rub,
+            margin_percent=margin.margin_percent,
+            profit_per_ruble_day_pct=margin.profit_per_ruble_day_pct,
+            expected_hold_days=expected_hold_days,
+            cohort_size=cohort_size,
+            url=url,
+        )
+
+        if not threshold_ok:
+            return False
+
+        # Cooldown: don't re-alert same nm_id within N hours
+        if await self._repo.recently_alerted(nm_id, hours=self._config.arbitrage_alert_cooldown_hours):
+            return False
+
+        # Send Telegram alert
+        text = build_alert_message(
+            nm_id=nm_id, name=name, brand=brand, query=query_text,
+            margin=margin, cohort_size=cohort_size,
+            market_median=market_median, market_p25=market_p25, market_min=market_min,
+            url=url,
+        )
+        sent = await self._broadcast(text)
+        if sent > 0:
+            await self._repo.mark_alerted(cand_id)
+            logger.info("ARBITRAGE: alert sent nm=%s margin=%d₽ pprd=%.3f%% to %d subs",
+                        nm_id, margin.margin_rub, margin.profit_per_ruble_day_pct, sent)
+            return True
+        return False
+
+    async def _broadcast(self, text: str) -> int:
+        chat_ids = await self._subs.list_active_chat_ids()
+        sent = 0
+        for chat_id in chat_ids:
+            try:
+                await self._bot.send_message(chat_id, text, disable_web_page_preview=True)
+                sent += 1
+            except Exception:
+                logger.exception("ARBITRAGE: send_message failed for chat=%s", chat_id)
+        return sent
+
+    async def _refresh_own_nm_cache(self) -> None:
+        now = datetime.now(timezone.utc)
+        if self._own_nm_cache_at is not None:
+            age = (now - self._own_nm_cache_at).total_seconds()
+            if age < 3600:
+                return
+        try:
+            nm_ids = await self._business.list_recent_own_nm_ids(days=90)
+            self._own_nm_cache = set(nm_ids)
+            self._own_nm_cache_at = now
+            logger.info("ARBITRAGE: own_nm_cache refreshed: %d nm_ids", len(self._own_nm_cache))
+        except Exception:
+            logger.exception("ARBITRAGE: failed to refresh own_nm_cache (using stale)")
+
+
+def _parse_price_rub(prod: dict) -> int:
+    """Extract sale_price in rubles from raw WB product dict.
+
+    WB returns prices in kopecks. salePriceU = after seller discount. priceU = base.
+    """
+    raw = prod.get("salePriceU") or prod.get("priceU") or 0
+    try:
+        return int(raw) // 100
+    except (TypeError, ValueError):
+        return 0
