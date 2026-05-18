@@ -242,14 +242,21 @@ class WildberriesClient:
                 try:
                     payload = await self._request_endpoint_page(endpoint, query=query, page=page)
                     endpoint_responded = True
-                    products = []
+                    # Handle BOTH WB payload shapes:
+                    #   v9-v14: {"data": {"products": [...]}}
+                    #   v18:    {"products": [...]}  (flat, top-level)
+                    products: list = []
                     if isinstance(payload, dict):
-                        data = payload.get("data")
-                        if isinstance(data, dict):
-                            products = data.get("products") or []
+                        top = payload.get("products")
+                        if isinstance(top, list):
+                            products = top
+                        else:
+                            data = payload.get("data")
+                            if isinstance(data, dict):
+                                products = data.get("products") or []
                     if isinstance(products, list) and products:
                         page_products = [p for p in products if isinstance(p, dict)]
-                        self._logger.debug(
+                        self._logger.info(
                             "WB arbitrage endpoint=%s page=%s raw=%s",
                             endpoint.name, page, len(page_products),
                         )
