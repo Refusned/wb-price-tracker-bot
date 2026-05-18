@@ -92,6 +92,22 @@ class ArbitrageRepository:
             (datetime.now(timezone.utc).isoformat(), int(found_count), int(query_id)),
         )
 
+    async def update_query_subject(
+        self, query_id: int, *, subject_id: int | None, subject_name: str | None,
+    ) -> None:
+        """Persist dominant subject discovered by scanner. Lets /arb_list show
+        which WB subject the query maps to + auto-link observations.
+        """
+        await self._db.execute(
+            """
+            UPDATE arb_queries
+            SET subject_id = COALESCE(?, subject_id),
+                subject_name = COALESCE(?, subject_name)
+            WHERE id = ?
+            """,
+            (subject_id, subject_name, int(query_id)),
+        )
+
     # ── arb_candidates ──────────────────────────────────────────
     async def record_candidate(self, **fields: Any) -> int:
         """Insert a candidate row. Returns new id.

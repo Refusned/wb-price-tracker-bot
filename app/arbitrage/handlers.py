@@ -99,11 +99,34 @@ def get_router(
                                   parse_mode="Markdown")
             return
         lines = ["📋 *Мои запросы:*", ""]
+        hints: list[str] = []
         for r in rows:
             last = (r["last_scanned_at"] or "—")[:16]
+            subj_info = ""
+            if r.get("subject_id"):
+                subj_info = f" → subj #{r['subject_id']}"
+                if r.get("subject_name"):
+                    subj_info = f" → {r['subject_name']}"
             lines.append(
-                f"#{r['id']} «{r['query']}» — найдено {r['last_found_count']}, скан {last}"
+                f"#{r['id']} «{r['query']}»{subj_info}\n"
+                f"   В каталоге: {r['last_found_count']}, последний скан: {last}"
             )
+            # Hint: if cohort found but no observations in that category yet
+            if r.get("subject_id") and r["last_found_count"] > 0:
+                cat = await arb_repo.get_category_avg_spp(
+                    r["subject_id"], days=30, min_samples=1,
+                )
+                if cat is None or cat.get("samples", 0) < 3:
+                    hints.append(
+                        f"⚠️ #{r['id']} «{r['query']}» — нет СПП-наблюдений "
+                        f"для категории #{r['subject_id']}. "
+                        f"Чтобы получать алерты, добавь 3+ наблюдения: "
+                        f"`/arb_observe <nm> <моя_цена> <публич>`"
+                    )
+        if hints:
+            lines.append("")
+            lines.append("━━━━━━━━━━━━━━━━━━━")
+            lines.extend(hints)
         await message.answer("\n".join(lines), parse_mode="Markdown")
 
     # ── /arb_remove ─────────────────────────────────────────────
@@ -234,12 +257,37 @@ def get_router(
         await message.answer("⏳ Запускаю скан…")
         try:
             result = await scanner.scan_once()
-            await message.answer(
-                f"✅ Скан завершён.\n"
-                f"Запросов: {result['queries']}\n"
-                f"Кандидатов: {result['candidates']}\n"
-                f"Отправлено алертов: {result['alerted']}"
-            )
+            # Build summary with per-query breakdown
+            queries = await arb_repo.list_queries(only_enabled=True)
+            lines = [
+                f"✅ Скан завершён.",
+                f"Запросов: {result['queries']}",
+                f"Кандидатов (с СПП): {result['candidates']}",
+                f"Отправлено алертов: {result['alerted']}",
+                "",
+                "*По запросам:*",
+            ]
+            need_obs: list[str] = []
+            for q in queries:
+                found = q.get("last_found_count", 0)
+                subj = q.get("subject_name") or (f"subj#{q['subject_id']}" if q.get("subject_id") else "?")
+                lines.append(f"• «{q['query']}» → {subj}: {found} товаров")
+                if q.get("subject_id") and found > 0:
+                    cat = await arb_repo.get_category_avg_spp(
+                        q["subject_id"], days=30, min_samples=1,
+                    )
+                    if cat is None or cat.get("samples", 0) < 3:
+                        need_obs.append(
+                            f"• {subj} (нужно 3+ наблюдения)"
+                        )
+            if need_obs:
+                lines.append("")
+                lines.append("⚠️ *Категории без СПП-данных:*")
+                lines.extend(need_obs)
+                lines.append("")
+                lines.append("Добавь `/arb_observe <nm> <моя_цена> <публич_цена>` "
+                             "для 3+ товаров в этих категориях — сканер начнёт алертить.")
+            await message.answer("\n".join(lines), parse_mode="Markdown")
         except Exception as exc:
             logger.exception("arb_scan_now failed")
             await message.answer(f"❌ Ошибка сканера: {exc}")
