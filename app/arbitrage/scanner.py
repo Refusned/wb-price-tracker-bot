@@ -191,9 +191,21 @@ class ArbitrageScanner:
         market_p25 = int(prices_rub[len(prices_rub) // 4])
         market_min = int(prices_rub[0])
         cohort_size = len(prices_rub)
+        # Persist dominant subject + sample subject_name so /arb_list can
+        # show the owner WHICH WB subject this query maps to (helps them
+        # add observations via /arb_observe for the right category).
+        sample_subj_name = next(
+            ((p.get("subjectName") or "").strip() for p in focused
+             if (p.get("subjectName") or "").strip()),
+            None,
+        )
+        await self._repo.update_query_subject(
+            query_id, subject_id=dominant_subject, subject_name=sample_subj_name,
+        )
         logger.info(
-            "ARBITRAGE: %r → subject %d, cohort=%d, P25=%d₽, median=%d₽",
-            query_text, dominant_subject, cohort_size, market_p25, market_median,
+            "ARBITRAGE: %r → subject %d (%s), cohort=%d, P25=%d₽, median=%d₽",
+            query_text, dominant_subject, sample_subj_name or "?",
+            cohort_size, market_p25, market_median,
         )
 
         candidates_count = 0
@@ -221,7 +233,10 @@ class ArbitrageScanner:
             if hit:
                 alerted_count += 1
 
-        await self._repo.mark_scanned(query_id, candidates_count)
+        # Record COHORT size (not candidates_count) so user sees "found N
+        # products in category X" — even when 0 passed SPP resolution.
+        # /arb_list shows hint if found > 0 but no observations exist.
+        await self._repo.mark_scanned(query_id, cohort_size)
         return (candidates_count, alerted_count)
 
     async def _evaluate_product(
