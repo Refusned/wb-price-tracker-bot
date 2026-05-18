@@ -410,21 +410,44 @@ class ArbitrageScanner:
 def _parse_price_rub(prod: dict) -> int:
     """Extract sale_price in rubles from raw WB product dict.
 
-    WB returns prices in kopecks (verified on real payload: priceU=267600
-    matches 33% discount on retail 2676₽ vs salePriceU=177400 = 1774₽).
-    salePriceU = after seller discount. priceU = base.
+    WB u-search/v18 (2026-05) moved prices into ``sizes[0].price.product``
+    (after seller discount, kopecks). ``sizes[0].price.basic`` is regular.
+    Legacy v9-v14: top-level ``salePriceU`` / ``priceU``.
 
-    Returns 0 on missing/unparseable. Logs warning to detect WB API drift —
-    if a scan ends up with mostly 0s, WB likely changed the encoding.
+    Returns 0 on missing/unparseable. Logs warning to detect drift.
     """
+    # v18 shape — preferred
+    sizes = prod.get("sizes")
+    if isinstance(sizes, list) and sizes:
+        first = sizes[0] if isinstance(sizes[0], dict) else None
+        if first:
+            price_obj = first.get("price")
+            if isinstance(price_obj, dict):
+                product_price = price_obj.get("product")
+                if product_price:
+                    try:
+                        return int(product_price) // 100
+                    except (TypeError, ValueError):
+                        pass
+                basic = price_obj.get("basic")
+                if basic:
+                    try:
+                        return int(basic) // 100
+                    except (TypeError, ValueError):
+                        pass
+
+    # Legacy fallback
     raw = prod.get("salePriceU") or prod.get("priceU")
     if raw is None or raw == 0:
+        logger.debug("ARBITRAGE: no price for nm=%s (no sizes.price, no priceU)", prod.get("id"))
         return 0
     try:
         return int(raw) // 100
     except (TypeError, ValueError):
         logger.warning(
-            "ARBITRAGE: unparseable price for nm=%s salePriceU=%r priceU=%r",
-            prod.get("id"), prod.get("salePriceU"), prod.get("priceU"),
+            "ARBITRAGE: unparseable price for nm=%s sizes[0].price=%r salePriceU=%r",
+            prod.get("id"),
+            sizes[0].get("price") if isinstance(sizes, list) and sizes else None,
+            prod.get("salePriceU"),
         )
         return 0
