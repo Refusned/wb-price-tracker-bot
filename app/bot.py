@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram import Dispatcher
 
 from app.arbitrage import handlers as arbitrage_handlers
+from app.arbitrage.auto_observer import AutoObserver
 from app.arbitrage.repository import ArbitrageRepository
 from app.arbitrage.scanner import ArbitrageScanner
 from app.config import AppConfig
@@ -41,6 +42,7 @@ def build_dispatcher(
     updater: WbUpdateScheduler,
     arb_repo: ArbitrageRepository | None = None,
     arb_scanner: ArbitrageScanner | None = None,
+    auto_observer: AutoObserver | None = None,
 ) -> Dispatcher:
     dp = Dispatcher()
 
@@ -121,6 +123,7 @@ def build_dispatcher(
             business_repository=business_repository,
             subscriber_repository=subscriber_repository,
             decision_snapshot_repo=decision_snapshot_repo,
+            auto_observer=auto_observer,
         )
     )
 
@@ -134,16 +137,24 @@ def build_dispatcher(
                 insight_engine=insight_engine,
                 updater=updater,
                 decision_snapshot_repo=decision_snapshot_repo,
+                auto_observer=auto_observer,
             )
         )
 
     if arb_repo is not None and arb_scanner is not None and config.arbitrage_enabled:
+        # auto_observer required for arb_quickadd / arb_bulk. Fallback empty stub
+        # if for some reason it's None (shouldn't happen in main.py wiring).
+        if auto_observer is None:
+            from app.arbitrage.auto_observer import AutoObserver as _AO
+            # This branch shouldn't trigger; defensive
+            raise RuntimeError("auto_observer must be provided when arbitrage_enabled")
         dp.include_router(
             arbitrage_handlers.get_router(
                 config=config,
                 arb_repo=arb_repo,
                 scanner=arb_scanner,
                 subscriber_repo=subscriber_repository,
+                auto_observer=auto_observer,
             )
         )
 

@@ -39,6 +39,7 @@ def get_router(
     insight_engine: InsightEngine,
     updater: WbUpdateScheduler,
     decision_snapshot_repo: DecisionSnapshotRepository | None = None,
+    auto_observer: "object | None" = None,
 ) -> Router:
     router = Router(name="business")
 
@@ -322,6 +323,27 @@ def get_router(
             except Exception:
                 pass  # linking is best-effort, don't block purchase
 
+        # Auto-observe buyer-side personal СПП for arbitrage scanner.
+        # Best-effort: never blocks purchase. Only when nm_id known directly
+        # (supplier_article-only purchases skip this — no way to fetch WB
+        # public price without nm).
+        observe_note = ""
+        if auto_observer is not None and nm_id is not None:
+            try:
+                obs = await auto_observer.observe(
+                    nm_id=int(nm_id), paid_price_rub=int(price),
+                    source="purchase", note=f"auto from /buy purchase #{pid}",
+                )
+                if obs.ok:
+                    observe_note = (
+                        f"\n📊 СПП-наблюдение #{obs.observation_id}: "
+                        f"публич {obs.public_price_rub:,}₽ → "
+                        f"твоя {obs.paid_price_rub:,}₽ "
+                        f"(СПП {obs.spp_percent:.1f}%)".replace(",", " ")
+                    )
+            except Exception:
+                pass  # best-effort
+
         total = qty * price
         ref = article or (f"nm{nm_id}" if nm_id else "—")
         link_note = f"\n🔗 Связан с decision #{linked_snapshot_id}" if linked_snapshot_id else ""
@@ -332,7 +354,8 @@ def get_router(
             f"Цена/шт: {format_price_rub(price)}\n"
             f"Всего: {format_price_rub(total)}\n"
             f"СПП на момент: {spp}%"
-            f"{link_note}\n\n"
+            f"{link_note}"
+            f"{observe_note}\n\n"
             f"💡 Прибыль по артикулу: /profit"
         )
 

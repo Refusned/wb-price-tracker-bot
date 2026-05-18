@@ -8,6 +8,7 @@ import aiohttp
 import certifi
 from aiogram import Bot
 
+from app.arbitrage.auto_observer import AutoObserver
 from app.arbitrage.repository import ArbitrageRepository
 from app.arbitrage.scanner import ArbitrageScanner
 from app.arbitrage.spp_resolver import PersonalSppResolver
@@ -125,6 +126,7 @@ async def run() -> None:
         # ── Day 18+: arbitrage scanner wiring ──────────────────────
         arb_scanner: ArbitrageScanner | None = None
         arb_tariffs_cache: TariffsCache | None = None
+        arb_auto_observer: AutoObserver | None = None
         if config.arbitrage_enabled and config.wb_seller_api_key:
             arb_tariffs_cache = TariffsCache(
                 session=http_session,
@@ -132,6 +134,7 @@ async def run() -> None:
                 tariffs_repo=arb_tariffs_repo,
             )
             arb_spp_resolver = PersonalSppResolver(arb_repo)
+            arb_auto_observer = AutoObserver(wb_client=wb_client, arb_repo=arb_repo)
             arb_scanner = ArbitrageScanner(
                 config=config,
                 wb_client=wb_client,
@@ -184,6 +187,7 @@ async def run() -> None:
             updater=updater,
             arb_repo=arb_repo,
             arb_scanner=arb_scanner,
+            auto_observer=arb_auto_observer,
         )
 
         await updater.start()

@@ -25,6 +25,7 @@ def get_router(
     business_repository: BusinessRepository,
     subscriber_repository: SubscriberRepository,
     decision_snapshot_repo: DecisionSnapshotRepository | None = None,
+    auto_observer: "object | None" = None,
 ) -> Router:
     router = Router(name="purchase_prompts")
 
@@ -167,6 +168,18 @@ def get_router(
                     linked_snapshot_id = int(snap["id"])
             except Exception:
                 pass  # best-effort
+
+        # Day 18+: auto-record buyer-side personal СПП observation.
+        # Same as /buy hook in business.py — best-effort, never blocks.
+        if auto_observer is not None:
+            try:
+                await auto_observer.observe(
+                    nm_id=nm_id, paid_price_rub=int(price),
+                    source="purchase",
+                    note=f"auto from stock arrival prompt #{prompt_id}",
+                )
+            except Exception:
+                pass
 
         await stock_arrival_repo.resolve(
             prompt_id,

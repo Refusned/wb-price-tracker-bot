@@ -21,6 +21,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 
+from app.arbitrage.auto_observer import AutoObserver
 from app.arbitrage.repository import ArbitrageRepository
 from app.arbitrage.scanner import ArbitrageScanner
 from app.config import AppConfig
@@ -47,6 +48,7 @@ def get_router(
     arb_repo: ArbitrageRepository,
     scanner: ArbitrageScanner,
     subscriber_repo: SubscriberRepository,
+    auto_observer: AutoObserver,
 ) -> Router:
     router = Router(name="arbitrage")
 
@@ -58,15 +60,21 @@ def get_router(
         await remember_subscriber(message, subscriber_repo)
         await message.answer(
             "🎯 *Арбитражный сканер*\n\n"
-            "Команды:\n"
-            "• `/arb_add <фраза>` — добавить запрос\n"
+            "*Запросы:*\n"
+            "• `/arb_add <фраза>` — добавить\n"
             "• `/arb_list` — мои запросы\n"
-            "• `/arb_remove <id>` — отключить запрос\n"
-            "• `/arb_deals` — свежие связки (24ч)\n"
+            "• `/arb_remove <id>` — отключить\n"
+            "\n*Наблюдения (СПП):*\n"
+            "• `/arb_quickadd <nm> <моя_цена>` — авто-fetch публичной\n"
+            "• `/arb_bulk` — массовый paste (см. формат внутри)\n"
+            "• `/arb_observe <nm> <моя_цена> <публич>` — ручной ввод\n"
             "• `/arb_my_spp` — моя СПП по категориям\n"
-            "• `/arb_top_cat` — топ категорий по СПП\n"
-            "• `/arb_observe <nm> <pol_chek> <bez_skidki>` — записать наблюдение\n"
-            "• `/arb_scan_now` — запустить скан сейчас",
+            "• `/arb_top_cat` — топ категорий\n"
+            "\n*Скан:*\n"
+            "• `/arb_scan_now` — запустить сейчас\n"
+            "• `/arb_deals` — свежие связки (24ч)\n"
+            "\n💡 Записи закупок через /buy автоматически "
+            "генерируют наблюдения.",
             reply_markup=_arb_submenu_keyboard(),
             parse_mode="Markdown",
         )
@@ -248,6 +256,132 @@ def get_router(
         except Exception as exc:
             logger.exception("arb_observe failed")
             await message.answer(f"❌ Ошибка: {exc}")
+
+    # ── /arb_quickadd ───────────────────────────────────────────
+    @router.message(Command("arb_quickadd"))
+    async def arb_quickadd(message: Message) -> None:
+        if not await ensure_allowed(message, config):
+            return
+        parts = (message.text or "").split()
+        if len(parts) < 3:
+            await message.answer(
+                "Использование: `/arb_quickadd <nm_id> <моя_цена_на_checkout>`\n\n"
+                "Бот сам найдёт публичную цену и посчитает СПП.\n"
+                "Пример: `/arb_quickadd 876392996 10658`",
+                parse_mode="Markdown",
+            )
+            return
+        try:
+            nm_id = int(parts[1])
+            my_price = int(parts[2])
+        except ValueError:
+            await message.answer("Числа должны быть целыми. Пример: `/arb_quickadd 876392996 10658`",
+                                  parse_mode="Markdown")
+            return
+
+        await message.answer("⏳ Запрашиваю публичную цену…")
+        result = await auto_observer.observe(
+            nm_id=nm_id, paid_price_rub=my_price,
+            source="checkout_manual", note="quickadd",
+        )
+        if result.ok:
+            await message.answer(
+                f"✅ Наблюдение #{result.observation_id} записано.\n\n"
+                f"nm: {nm_id}\n"
+                f"Публичная цена: {result.public_price_rub:,}₽\n".replace(",", " ") +
+                f"Моя цена: {result.paid_price_rub:,}₽\n".replace(",", " ") +
+                f"Моя СПП: *{result.spp_percent:.1f}%* "
+                f"({result.public_price_rub - result.paid_price_rub:,}₽ экономии)".replace(",", " "),
+                parse_mode="Markdown",
+            )
+        else:
+            reasons = {
+                "invalid_nm_id": "Неверный nm_id",
+                "wb_fetch_failed": "Не удалось получить данные WB (rate limit?)",
+                "nm_not_found_on_wb": f"WB не нашёл товар nm={nm_id}",
+                "public_price_zero": "WB вернул нулевую цену",
+                "paid_outside_range": f"Моя цена {my_price}₽ выше публичной — проверь числа",
+                "db_insert_failed": "Ошибка БД",
+            }
+            await message.answer(
+                f"❌ {reasons.get(result.skipped_reason, result.skipped_reason)}"
+            )
+
+    # ── /arb_bulk ───────────────────────────────────────────────
+    @router.message(Command("arb_bulk"))
+    async def arb_bulk(message: Message) -> None:
+        if not await ensure_allowed(message, config):
+            return
+        text = (message.text or "")
+        # Strip /arb_bulk prefix
+        body = text.split("\n", 1)[1] if "\n" in text else ""
+        body = body.strip()
+        if not body:
+            await message.answer(
+                "📝 *Массовый ввод наблюдений*\n\n"
+                "Использование: на новой строке после команды paste пары "
+                "`<nm_id> <моя_цена>`, по одной паре на строку.\n\n"
+                "Пример:\n"
+                "```\n"
+                "/arb_bulk\n"
+                "876392996 10658\n"
+                "260407160 8950\n"
+                "193961961 11200\n"
+                "```\n\n"
+                "Бот сам найдёт публичные цены и запишет СПП для каждого.",
+                parse_mode="Markdown",
+            )
+            return
+
+        # Parse lines
+        pairs: list[tuple[int, int]] = []
+        errors: list[str] = []
+        for i, line in enumerate(body.splitlines(), 1):
+            line = line.strip()
+            if not line:
+                continue
+            tokens = line.split()
+            if len(tokens) < 2:
+                errors.append(f"строка {i}: нужно 2 числа")
+                continue
+            try:
+                nm = int(tokens[0])
+                price = int(tokens[1])
+                pairs.append((nm, price))
+            except ValueError:
+                errors.append(f"строка {i}: нечисловые значения")
+
+        if not pairs:
+            await message.answer(
+                "❌ Не нашёл валидных пар. Каждая строка: `<nm_id> <цена>`",
+                parse_mode="Markdown",
+            )
+            return
+
+        await message.answer(f"⏳ Обрабатываю {len(pairs)} наблюдений…")
+        ok_count = 0
+        fail_count = 0
+        lines: list[str] = []
+        for nm, price in pairs:
+            r = await auto_observer.observe(
+                nm_id=nm, paid_price_rub=price,
+                source="checkout_manual", note="bulk",
+            )
+            if r.ok:
+                ok_count += 1
+                lines.append(
+                    f"✅ nm {nm}: публич {r.public_price_rub}₽ → моя {r.paid_price_rub}₽ "
+                    f"(СПП {r.spp_percent:.1f}%)"
+                )
+            else:
+                fail_count += 1
+                lines.append(f"❌ nm {nm}: {r.skipped_reason}")
+
+        summary = [f"📦 Записано: {ok_count}/{len(pairs)} (ошибок: {fail_count})"]
+        if errors:
+            summary.append(f"⚠️ Parse ошибки: {len(errors)}")
+        # Show first 15 lines
+        await message.answer("\n".join(summary + [""] + lines[:15]))
 
     # ── /arb_scan_now ───────────────────────────────────────────
     @router.message(Command("arb_scan_now"))
