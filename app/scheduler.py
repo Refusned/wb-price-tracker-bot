@@ -55,6 +55,8 @@ class WbUpdateScheduler:
         business_repository: BusinessRepository | None = None,
         seller_client: SellerClient | None = None,
         insight_engine: InsightEngine | None = None,
+        arbitrage_scanner: "object | None" = None,
+        tariffs_cache: "object | None" = None,
     ) -> None:
         self._config = config
         self._wb_client = wb_client
@@ -72,11 +74,14 @@ class WbUpdateScheduler:
         self._business_repository = business_repository
         self._seller_client = seller_client
         self._insight_engine = insight_engine
+        self._arbitrage_scanner = arbitrage_scanner
+        self._tariffs_cache = tariffs_cache
 
         self._logger = logging.getLogger(self.__class__.__name__)
         self._task: asyncio.Task | None = None
         self._seller_task: asyncio.Task | None = None
         self._briefing_task: asyncio.Task | None = None
+        self._arbitrage_task: asyncio.Task | None = None
         self._manual_update_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._update_lock = asyncio.Lock()
@@ -94,10 +99,14 @@ class WbUpdateScheduler:
         if self._seller_client and self._business_repository:
             self._seller_task = asyncio.create_task(self._run_seller_loop(), name="seller-updater")
             self._briefing_task = asyncio.create_task(self._run_briefing_loop(), name="briefing")
+        if self._config.arbitrage_enabled and self._arbitrage_scanner is not None:
+            self._arbitrage_task = asyncio.create_task(
+                self._run_arbitrage_loop(), name="arbitrage-scanner",
+            )
 
     async def stop(self) -> None:
         self._stop_event.set()
-        for task_attr in ("_task", "_seller_task", "_briefing_task"):
+        for task_attr in ("_task", "_seller_task", "_briefing_task", "_arbitrage_task"):
             task = getattr(self, task_attr)
             if task is None:
                 continue
@@ -628,3 +637,42 @@ class WbUpdateScheduler:
             self._logger.info("Morning briefing sent to %s chats", len(chat_ids))
         except Exception as exc:
             self._logger.exception("Briefing failed: %s", exc)
+
+    async def _run_arbitrage_loop(self) -> None:
+        """Day 18+: arbitrage scanner periodic loop.
+
+        Every ``arbitrage_scan_interval_seconds``:
+            1. Refresh tariffs cache if stale (24h).
+            2. Run scanner.scan_once().
+
+        Logs every iteration; on exception continues after backoff.
+        """
+        scan_interval = max(60, self._config.arbitrage_scan_interval_seconds)
+        self._logger.info(
+            "ARBITRAGE loop started: interval=%ds, threshold PPRD≥%.2f%% AND profit≥%d₽ AND margin≥%.1f%%",
+            scan_interval,
+            self._config.arbitrage_min_pprd_percent,
+            self._config.arbitrage_min_profit_rub,
+            self._config.arbitrage_min_margin_percent,
+        )
+        while not self._stop_event.is_set():
+            try:
+                if self._tariffs_cache is not None:
+                    refreshed = await self._tariffs_cache.refresh_if_stale()
+                    if refreshed:
+                        self._logger.info("ARBITRAGE: tariffs cache refreshed")
+                result = await self._arbitrage_scanner.scan_once()
+                self._logger.info(
+                    "ARBITRAGE scan: queries=%d candidates=%d alerted=%d",
+                    result["queries"], result["candidates"], result["alerted"],
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._logger.exception("ARBITRAGE loop iteration failed")
+
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=scan_interval)
+            except asyncio.TimeoutError:
+                pass
+        self._logger.info("ARBITRAGE loop stopped")

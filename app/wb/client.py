@@ -215,6 +215,59 @@ class WildberriesClient:
 
         return list(unique_items.values())
 
+    async def search_for_arbitrage_raw(
+        self, query: str, max_pages: int | None = None,
+    ) -> list[dict]:
+        """Day 18+: search returning RAW product dicts (no filter, no Item parse).
+
+        ArbitrageScanner needs fields not in ``Item``: subjectId, brand, feedbacks,
+        volume, priceU, salePriceU. This returns the raw products array from WB
+        search endpoint, deduplicated by ``id`` (nm_id).
+        """
+        pages = max_pages if max_pages is not None else self._max_pages
+        pages = max(1, pages)
+
+        unique_raw: dict[int, dict] = {}
+
+        for page in range(1, pages + 1):
+            endpoint_responded = False
+            page_products: list[dict] = []
+
+            for endpoint in SEARCH_ENDPOINTS:
+                try:
+                    payload = await self._request_endpoint_page(endpoint, query=query, page=page)
+                    endpoint_responded = True
+                    products = []
+                    if isinstance(payload, dict):
+                        data = payload.get("data")
+                        if isinstance(data, dict):
+                            products = data.get("products") or []
+                    if isinstance(products, list) and products:
+                        page_products = [p for p in products if isinstance(p, dict)]
+                        self._logger.debug(
+                            "WB arbitrage endpoint=%s page=%s raw=%s",
+                            endpoint.name, page, len(page_products),
+                        )
+                        break
+                except Exception as exc:
+                    self._logger.debug(
+                        "WB arbitrage endpoint=%s page=%s failed: %s",
+                        endpoint.name, page, exc,
+                    )
+
+            if not endpoint_responded:
+                if page == 1:
+                    raise RuntimeError(f"WB arbitrage search failed for '{query}'")
+                break
+            if not page_products:
+                break
+            for prod in page_products:
+                pid = prod.get("id")
+                if isinstance(pid, int):
+                    unique_raw[pid] = prod
+
+        return list(unique_raw.values())
+
     async def _fetch_page_items(self, endpoint: SearchEndpoint, *, query: str, page: int) -> list[Item]:
         payload = await self._request_endpoint_page(endpoint, query=query, page=page)
         items = self._filter_relevant_items(

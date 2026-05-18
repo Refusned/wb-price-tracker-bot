@@ -498,6 +498,25 @@ class BusinessRepository:
         )
         return float((row["s"] if row else None) or 0)
 
+    async def list_recent_own_nm_ids(self, days: int = 90) -> list[int]:
+        """Day 18+: union of nm_ids in own_sales and purchases within window.
+
+        Used by ArbitrageScanner to exclude self-listings from candidates.
+        Defensive: nm_id may be NULL in legacy purchases — those are skipped.
+        """
+        start_iso = (datetime.now(timezone.utc) - timedelta(days=max(days, 1))).strftime("%Y-%m-%d")
+        rows = await self._db.fetchall(
+            """
+            SELECT DISTINCT nm_id FROM own_sales
+            WHERE nm_id IS NOT NULL AND nm_id > 0 AND date >= ?
+            UNION
+            SELECT DISTINCT nm_id FROM purchases
+            WHERE nm_id IS NOT NULL AND nm_id > 0 AND date >= ?
+            """,
+            (start_iso, start_iso),
+        )
+        return [int(r["nm_id"]) for r in rows if r["nm_id"] is not None]
+
     # ---------- Profit calculations ----------
 
     async def get_avg_buy_price_per_article(self, days: int | None = None) -> dict[str, float]:

@@ -145,6 +145,21 @@ class AppConfig:
     # If False, suppress per-order and per-sale Telegram notifications
     # (the "you got a new order!" spam). Price-drop alerts are NOT affected.
     event_alerts_enabled: bool
+    # ── Day 18+: Arbitrage scanner ─────────────────────────────────
+    arbitrage_enabled: bool
+    arbitrage_scan_interval_seconds: int
+    arbitrage_min_pprd_percent: float       # profit per ruble per day, %
+    arbitrage_min_profit_rub: int
+    arbitrage_min_margin_percent: float
+    arbitrage_alert_cooldown_hours: int
+    arbitrage_daily_alert_cap: int
+    arbitrage_cohort_min_size: int
+    arbitrage_default_spp_percent: float
+    # Path to file with buyer cookie (hot-reloaded; / arb_set_cookie command).
+    # Empty string → cookie path disabled, only manual observations used.
+    wb_buyer_cookie_path: str
+    # WB destination ID for card.wb.ru (Moscow default).
+    wb_buyer_dest_param: int
 
     @property
     def owner_mode_enabled(self) -> bool:
@@ -234,4 +249,15 @@ def load_config() -> AppConfig:
             )
         ),
         event_alerts_enabled=_to_bool("EVENT_ALERTS_ENABLED", True),
+        arbitrage_enabled=_to_bool("ARBITRAGE_ENABLED", False),
+        arbitrage_scan_interval_seconds=_to_int("ARBITRAGE_SCAN_INTERVAL_SECONDS", 600),
+        arbitrage_min_pprd_percent=_to_float("ARBITRAGE_MIN_PPRD_PERCENT", 0.25),
+        arbitrage_min_profit_rub=_to_int("ARBITRAGE_MIN_PROFIT_RUB", 500),
+        arbitrage_min_margin_percent=_to_float("ARBITRAGE_MIN_MARGIN_PERCENT", 8.0),
+        arbitrage_alert_cooldown_hours=_to_int("ARBITRAGE_ALERT_COOLDOWN_HOURS", 6),
+        arbitrage_daily_alert_cap=_to_int("ARBITRAGE_DAILY_ALERT_CAP", 30),
+        arbitrage_cohort_min_size=_to_int("ARBITRAGE_COHORT_MIN_SIZE", 5),
+        arbitrage_default_spp_percent=_to_float("ARBITRAGE_DEFAULT_SPP_PERCENT", 20.0),
+        wb_buyer_cookie_path=os.getenv("WB_BUYER_COOKIE_PATH", "data/wb_buyer_cookie.txt"),
+        wb_buyer_dest_param=_to_int("WB_BUYER_DEST_PARAM", -1257786),
     )

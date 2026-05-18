@@ -21,6 +21,7 @@ from . import (
     m005_missed_deal_tags,
     m006_stock_arrival_tracking,
     m007_decision_purchase_link,
+    m008_arbitrage,
 )
 
 MIGRATIONS = [
@@ -31,4 +32,5 @@ MIGRATIONS = [
     m005_missed_deal_tags,
     m006_stock_arrival_tracking,
     m007_decision_purchase_link,
+    m008_arbitrage,
 ]
