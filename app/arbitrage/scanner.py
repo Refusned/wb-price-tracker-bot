@@ -247,6 +247,14 @@ class ArbitrageScanner:
         if market_price_rub <= 0:
             return None
 
+        # Outlier guard: WB sometimes mislabels accessories with the same
+        # subjectId as the main product (e.g. подставки for Станции). Their
+        # cheap price + cohort P25 anchor creates fake 1000%+ margins.
+        # Skip items priced <50% of P25 (the realistic floor for the cohort).
+        # ``market_p25`` and ``market_min`` are passed in from _scan_query.
+        if market_p25 > 0 and market_price_rub < market_p25 // 2:
+            return None
+
         subject_id = prod.get("subjectId") if isinstance(prod.get("subjectId"), int) else None
         # /review fix: extract subjectName from raw payload for /arb_my_spp display.
         # Falls back to None if WB omits it (then /arb_my_spp shows '?').
