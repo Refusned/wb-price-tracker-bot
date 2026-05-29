@@ -451,15 +451,32 @@ def _parse_keyword_csv(raw: str | None) -> list[str]:
     return [kw.strip().lower() for kw in str(raw).split(",") if kw.strip()]
 
 
+def _product_color_text(prod: dict) -> str:
+    """Lower-cased WB structured colour names for a product.
+
+    WB search (u-search v18) returns ``colors: [{"name": "черный"}]`` populated
+    even when the title omits the colour (verified: a no-colour-title Станция
+    reports colors=[черный]). This is the authoritative colour signal — no LLM
+    or card-photo vision needed.
+    """
+    parts = [
+        (c.get("name") or "")
+        for c in (prod.get("colors") or [])
+        if isinstance(c, dict)
+    ]
+    return " ".join(parts).lower()
+
+
 def _filter_cohort_by_keywords(
     products: list[dict], *, include: str | None, exclude: str | None,
 ) -> list[dict]:
-    """Деterministic per-query color/variant filter on product ``name``.
+    """Deterministic per-query colour/variant filter.
 
-    Mirrors ``WildberriesClient._filter_relevant_items`` semantics: exclude
-    pass first (drop any name containing a blocked keyword), then include
-    whitelist (keep only names containing ≥1 include keyword). No keywords
-    set → list returned unchanged.
+    The include whitelist is tested against WB's STRUCTURED colour field first
+    (so black/grey units whose TITLE omits the colour are still kept — these
+    are often the cheapest listings). If a product has no colour data, the
+    title is used as fallback. Exclude keywords are matched against both the
+    title and the colour. No keywords set → list returned unchanged.
     """
     inc = _parse_keyword_csv(include)
     exc = _parse_keyword_csv(exclude)
@@ -468,9 +485,14 @@ def _filter_cohort_by_keywords(
     result: list[dict] = []
     for p in products:
         name = (p.get("name") or "").lower()
-        if exc and any(kw in name for kw in exc):
+        color = _product_color_text(p)
+        include_haystack = color if color else name
+        if exc and (
+            any(kw in name for kw in exc)
+            or (color and any(kw in color for kw in exc))
+        ):
             continue
-        if inc and not any(kw in name for kw in inc):
+        if inc and not any(kw in include_haystack for kw in inc):
             continue
         result.append(p)
     return result
