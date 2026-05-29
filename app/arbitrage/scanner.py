@@ -172,6 +172,24 @@ class ArbitrageScanner:
             dominant_subject = max(by_subject, key=lambda sid: len(by_subject[sid]))
 
         focused = by_subject[dominant_subject]
+
+        # Этап 1: per-query deterministic color/variant filter (NO LLM).
+        # Applied BEFORE cohort metrics so P25/median/min anchor on the
+        # correct product set. Keywords are per-query (empty → no filtering),
+        # so a Станция query filters by colour while a robot-vacuum query is
+        # left untouched.
+        focused_before = len(focused)
+        focused = _filter_cohort_by_keywords(
+            focused,
+            include=q.get("include_keywords"),
+            exclude=q.get("exclude_keywords"),
+        )
+        if len(focused) != focused_before:
+            logger.info(
+                "ARBITRAGE: %r cohort %d → %d after color/variant filter",
+                query_text, focused_before, len(focused),
+            )
+
         if len(focused) < self._config.arbitrage_cohort_min_size:
             logger.info(
                 "ARBITRAGE: %r dominant subject %d cohort too small (%d), skip",
@@ -425,6 +443,59 @@ class ArbitrageScanner:
             logger.info("ARBITRAGE: own_nm_cache refreshed: %d nm_ids", len(self._own_nm_cache))
         except Exception:
             logger.exception("ARBITRAGE: failed to refresh own_nm_cache (using stale)")
+
+
+def _parse_keyword_csv(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [kw.strip().lower() for kw in str(raw).split(",") if kw.strip()]
+
+
+def _product_color_text(prod: dict) -> str:
+    """Lower-cased WB structured colour names for a product.
+
+    WB search (u-search v18) returns ``colors: [{"name": "черный"}]`` populated
+    even when the title omits the colour (verified: a no-colour-title Станция
+    reports colors=[черный]). This is the authoritative colour signal — no LLM
+    or card-photo vision needed.
+    """
+    parts = [
+        (c.get("name") or "")
+        for c in (prod.get("colors") or [])
+        if isinstance(c, dict)
+    ]
+    return " ".join(parts).lower()
+
+
+def _filter_cohort_by_keywords(
+    products: list[dict], *, include: str | None, exclude: str | None,
+) -> list[dict]:
+    """Deterministic per-query colour/variant filter.
+
+    The include whitelist is tested against WB's STRUCTURED colour field first
+    (so black/grey units whose TITLE omits the colour are still kept — these
+    are often the cheapest listings). If a product has no colour data, the
+    title is used as fallback. Exclude keywords are matched against both the
+    title and the colour. No keywords set → list returned unchanged.
+    """
+    inc = _parse_keyword_csv(include)
+    exc = _parse_keyword_csv(exclude)
+    if not inc and not exc:
+        return products
+    result: list[dict] = []
+    for p in products:
+        name = (p.get("name") or "").lower()
+        color = _product_color_text(p)
+        include_haystack = color if color else name
+        if exc and (
+            any(kw in name for kw in exc)
+            or (color and any(kw in color for kw in exc))
+        ):
+            continue
+        if inc and not any(kw in include_haystack for kw in inc):
+            continue
+        result.append(p)
+    return result
 
 
 def _parse_price_rub(prod: dict) -> int:

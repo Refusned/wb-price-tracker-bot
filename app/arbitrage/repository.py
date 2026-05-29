@@ -10,6 +10,11 @@ from app.storage.db import Database
 _SPP_CONFIDENCE = {"high", "medium", "low"}
 _SPP_SOURCES = {"cookie", "observation", "category_avg", "manual", "default", "checkout_manual", "purchase"}
 
+# Этап 1: owner ground-truth labels on an nm_id. Used to measure how often
+# the cohort produced wrong-product/wrong-color alerts (the deterministic
+# filter's precision) BEFORE any LLM is considered.
+NM_LABELS = {"bought", "wrong_color", "wrong_product", "no_cash", "bad_margin"}
+
 
 class ArbitrageRepository:
     def __init__(self, db: Database) -> None:
@@ -63,7 +68,8 @@ class ArbitrageRepository:
         rows = await self._db.fetchall(
             f"""
             SELECT id, query, enabled, subject_id, subject_name,
-                   created_at, last_scanned_at, last_found_count
+                   created_at, last_scanned_at, last_found_count,
+                   include_keywords, exclude_keywords
             FROM arb_queries {where}
             ORDER BY id ASC
             """
@@ -78,9 +84,27 @@ class ArbitrageRepository:
                 "created_at": str(r["created_at"]),
                 "last_scanned_at": str(r["last_scanned_at"]) if r["last_scanned_at"] else None,
                 "last_found_count": int(r["last_found_count"] or 0),
+                "include_keywords": str(r["include_keywords"]) if r["include_keywords"] else None,
+                "exclude_keywords": str(r["exclude_keywords"]) if r["exclude_keywords"] else None,
             }
             for r in rows
         ]
+
+    async def set_query_keywords(
+        self, query_id: int, *, include: str | None, exclude: str | None,
+    ) -> None:
+        """Set per-query color/variant keyword filter (CSV). Empty → NULL.
+
+        Per-query (not global): a Станция query filters by colour, a
+        robot-vacuum query stays unfiltered. Applied by the scanner to the
+        cohort BEFORE price metrics.
+        """
+        inc = (include or "").strip() or None
+        exc = (exclude or "").strip() or None
+        await self._db.execute(
+            "UPDATE arb_queries SET include_keywords = ?, exclude_keywords = ? WHERE id = ?",
+            (inc, exc, int(query_id)),
+        )
 
     async def mark_scanned(self, query_id: int, found_count: int) -> None:
         await self._db.execute(
@@ -354,3 +378,39 @@ class ArbitrageRepository:
             }
             for r in rows
         ]
+
+    # ── arb_nm_labels (Этап 1 ground-truth) ─────────────────────
+    async def add_nm_label(
+        self, nm_id: int, label: str, *, note: str | None = None,
+    ) -> int:
+        if label not in NM_LABELS:
+            raise ValueError(f"label must be one of {sorted(NM_LABELS)}")
+        now = datetime.now(timezone.utc).isoformat()
+        inserted_id = 0
+
+        async def _tx(conn) -> None:
+            nonlocal inserted_id
+            cursor = await conn.execute(
+                "INSERT INTO arb_nm_labels (nm_id, label, note, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (int(nm_id), label, note, now),
+            )
+            inserted_id = int(cursor.lastrowid or 0)
+            await cursor.close()
+
+        await self._db.transaction(_tx)
+        return inserted_id
+
+    async def label_counts(self, *, days: int = 30) -> dict[str, int]:
+        """Counts per label over the window (for the Этап 1 measurement)."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max(days, 1))).isoformat()
+        rows = await self._db.fetchall(
+            """
+            SELECT label, COUNT(*) AS c
+            FROM arb_nm_labels
+            WHERE created_at >= ?
+            GROUP BY label
+            """,
+            (cutoff,),
+        )
+        return {str(r["label"]): int(r["c"]) for r in rows}

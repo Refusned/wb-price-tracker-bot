@@ -22,6 +22,7 @@ from . import (
     m006_stock_arrival_tracking,
     m007_decision_purchase_link,
     m008_arbitrage,
+    m009_arb_keywords_labels,
 )
 
 MIGRATIONS = [
@@ -33,4 +34,5 @@ MIGRATIONS = [
     m006_stock_arrival_tracking,
     m007_decision_purchase_link,
     m008_arbitrage,
+    m009_arb_keywords_labels,
 ]
