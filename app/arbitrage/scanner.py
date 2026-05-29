@@ -172,6 +172,24 @@ class ArbitrageScanner:
             dominant_subject = max(by_subject, key=lambda sid: len(by_subject[sid]))
 
         focused = by_subject[dominant_subject]
+
+        # Этап 1: per-query deterministic color/variant filter (NO LLM).
+        # Applied BEFORE cohort metrics so P25/median/min anchor on the
+        # correct product set. Keywords are per-query (empty → no filtering),
+        # so a Станция query filters by colour while a robot-vacuum query is
+        # left untouched.
+        focused_before = len(focused)
+        focused = _filter_cohort_by_keywords(
+            focused,
+            include=q.get("include_keywords"),
+            exclude=q.get("exclude_keywords"),
+        )
+        if len(focused) != focused_before:
+            logger.info(
+                "ARBITRAGE: %r cohort %d → %d after color/variant filter",
+                query_text, focused_before, len(focused),
+            )
+
         if len(focused) < self._config.arbitrage_cohort_min_size:
             logger.info(
                 "ARBITRAGE: %r dominant subject %d cohort too small (%d), skip",
@@ -425,6 +443,37 @@ class ArbitrageScanner:
             logger.info("ARBITRAGE: own_nm_cache refreshed: %d nm_ids", len(self._own_nm_cache))
         except Exception:
             logger.exception("ARBITRAGE: failed to refresh own_nm_cache (using stale)")
+
+
+def _parse_keyword_csv(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [kw.strip().lower() for kw in str(raw).split(",") if kw.strip()]
+
+
+def _filter_cohort_by_keywords(
+    products: list[dict], *, include: str | None, exclude: str | None,
+) -> list[dict]:
+    """Деterministic per-query color/variant filter on product ``name``.
+
+    Mirrors ``WildberriesClient._filter_relevant_items`` semantics: exclude
+    pass first (drop any name containing a blocked keyword), then include
+    whitelist (keep only names containing ≥1 include keyword). No keywords
+    set → list returned unchanged.
+    """
+    inc = _parse_keyword_csv(include)
+    exc = _parse_keyword_csv(exclude)
+    if not inc and not exc:
+        return products
+    result: list[dict] = []
+    for p in products:
+        name = (p.get("name") or "").lower()
+        if exc and any(kw in name for kw in exc):
+            continue
+        if inc and not any(kw in name for kw in inc):
+            continue
+        result.append(p)
+    return result
 
 
 def _parse_price_rub(prod: dict) -> int:

@@ -22,7 +22,7 @@ from aiogram.filters import Command
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 
 from app.arbitrage.auto_observer import AutoObserver
-from app.arbitrage.repository import ArbitrageRepository
+from app.arbitrage.repository import NM_LABELS, ArbitrageRepository
 from app.arbitrage.scanner import ArbitrageScanner
 from app.config import AppConfig
 from app.handlers.common import ensure_allowed, remember_subscriber
@@ -64,6 +64,9 @@ def get_router(
             "• `/arb_add <фраза>` — добавить\n"
             "• `/arb_list` — мои запросы\n"
             "• `/arb_remove <id>` — отключить\n"
+            "• `/arb_keywords <id> include=… exclude=…` — фильтр цвета/варианта\n"
+            "\n*Качество (ground-truth):*\n"
+            "• `/arb_mark <nm> <метка>` — пометить связку (wrong_color/…)\n"
             "\n*Наблюдения (СПП):*\n"
             "• `/arb_quickadd <nm> <моя_цена>` — авто-fetch публичной\n"
             "• `/arb_bulk` — массовый paste (см. формат внутри)\n"
@@ -150,6 +153,59 @@ def get_router(
         await arb_repo.remove_query(ident)
         await message.answer(f"✅ Запрос «{ident}» отключён")
 
+    # ── /arb_keywords ───────────────────────────────────────────
+    @router.message(Command("arb_keywords"))
+    async def arb_keywords(message: Message) -> None:
+        if not await ensure_allowed(message, config):
+            return
+        tokens = (message.text or "").split()
+        if len(tokens) < 2 or not tokens[1].isdigit():
+            await message.answer(
+                "Использование: `/arb_keywords <id> include=чёрн,серая exclude=восстановл`\n\n"
+                "• `include=` — оставлять только товары с этими словами в названии (whitelist)\n"
+                "• `exclude=` — убирать товары с этими словами\n"
+                "• `/arb_keywords <id> clear` — снять фильтр\n\n"
+                "Фильтр per-query: для «Станция Миди» задай цвета, для пылесосов оставь пустым.",
+                parse_mode="Markdown",
+            )
+            return
+        qid = int(tokens[1])
+        queries = await arb_repo.list_queries(only_enabled=False)
+        q = next((x for x in queries if x["id"] == qid), None)
+        if q is None:
+            await message.answer(f"❌ Запрос #{qid} не найден.")
+            return
+
+        rest = tokens[2:]
+        if len(rest) == 1 and rest[0].lower() == "clear":
+            await arb_repo.set_query_keywords(qid, include=None, exclude=None)
+            await message.answer(f"✅ Фильтр запроса #{qid} снят.")
+            return
+
+        include = exclude = None  # None = не трогать существующее
+        for tok in rest:
+            if tok.startswith("include="):
+                include = tok[len("include="):]
+            elif tok.startswith("exclude="):
+                exclude = tok[len("exclude="):]
+        if include is None and exclude is None:
+            await message.answer(
+                "Не нашёл `include=` / `exclude=`. Пример: "
+                "`/arb_keywords 2 include=чёрн,серая`",
+                parse_mode="Markdown",
+            )
+            return
+
+        inc = include if include is not None else q.get("include_keywords")
+        exc = exclude if exclude is not None else q.get("exclude_keywords")
+        await arb_repo.set_query_keywords(qid, include=inc, exclude=exc)
+        await message.answer(
+            f"✅ Фильтр запроса #{qid} «{q['query']}»:\n"
+            f"• include: `{inc or '—'}`\n"
+            f"• exclude: `{exc or '—'}`",
+            parse_mode="Markdown",
+        )
+
     # ── /arb_deals ──────────────────────────────────────────────
     @router.message(Command("arb_deals"))
     async def arb_deals(message: Message) -> None:
@@ -171,6 +227,32 @@ def get_router(
             if name:
                 lines.append(f"   {name[:60]}")
         await message.answer("\n".join(lines), parse_mode="Markdown")
+
+    # ── /arb_mark (ground-truth label) ──────────────────────────
+    @router.message(Command("arb_mark"))
+    async def arb_mark(message: Message) -> None:
+        if not await ensure_allowed(message, config):
+            return
+        tokens = (message.text or "").split(maxsplit=3)
+        labels_hint = " | ".join(sorted(NM_LABELS))
+        if len(tokens) < 3 or not tokens[1].isdigit() or tokens[2] not in NM_LABELS:
+            await message.answer(
+                "Использование: `/arb_mark <nm_id> <метка> [заметка]`\n\n"
+                f"Метки: `{labels_hint}`\n\n"
+                "Пример: `/arb_mark 304333036 wrong_color жёлтая, не моя`\n\n"
+                "Метки дают честный знаменатель для измерения качества фильтра.",
+                parse_mode="Markdown",
+            )
+            return
+        nm_id = int(tokens[1])
+        label = tokens[2]
+        note = tokens[3].strip() if len(tokens) > 3 else None
+        try:
+            await arb_repo.add_nm_label(nm_id, label, note=note)
+            await message.answer(f"✅ nm {nm_id} помечен: *{label}*", parse_mode="Markdown")
+        except Exception as exc:
+            logger.exception("arb_mark failed")
+            await message.answer(f"❌ Ошибка: {exc}")
 
     # ── /arb_my_spp ─────────────────────────────────────────────
     @router.message(Command("arb_my_spp"))
