@@ -50,9 +50,14 @@ def _make_config(monkeypatch, **overrides) -> AppConfig:
 
 
 def _prod(nm: int, name: str, price_rub: int, *, subject_id: int = _SUBJECT,
-          brand: str = "Yandex", feedbacks: int = 100, volume: float = 1.0) -> dict:
-    """Raw WB v18-shaped product dict (price in kopecks under sizes[0].price)."""
-    return {
+          brand: str = "Yandex", feedbacks: int = 100, volume: float = 1.0,
+          colors: list[str] | None = None) -> dict:
+    """Raw WB v18-shaped product dict (price in kopecks under sizes[0].price).
+
+    ``colors`` mirrors WB's structured colour field; omit to simulate a product
+    with no colour data (filter then falls back to the title).
+    """
+    d = {
         "id": nm,
         "subjectId": subject_id,
         "subjectName": "Умная колонка",
@@ -62,6 +67,9 @@ def _prod(nm: int, name: str, price_rub: int, *, subject_id: int = _SUBJECT,
         "volume": volume,
         "sizes": [{"price": {"product": price_rub * 100, "basic": price_rub * 100}}],
     }
+    if colors is not None:
+        d["colors"] = [{"name": c, "id": 0} for c in colors]
+    return d
 
 
 class _FakeWb:
@@ -199,4 +207,31 @@ async def test_no_keywords_does_not_filter(tmp_path, monkeypatch) -> None:
 
     assert await _recorded_nm_ids(db) == {201, 202, 203}
     assert result["candidates"] == 3
+    await db.close()
+
+
+async def test_structured_color_keeps_uncolored_title(tmp_path, monkeypatch) -> None:
+    """Black/grey units whose TITLE omits colour are kept via WB's structured
+    colours field; a non-target colour is dropped even with the same title.
+
+    This is the owner's requirement: the cheapest deals often hide in listings
+    that don't put the colour in the name. No LLM/vision — WB exposes colour
+    as structured data, present in the search payload itself.
+    """
+    config = _make_config(monkeypatch)
+    products = [
+        _prod(301, "Умная колонка Станция Миди с Zigbee", 12000, colors=["черный"]),
+        _prod(302, "Умная колонка Станция Миди с Zigbee", 12500, colors=["серый"]),
+        _prod(303, "Умная колонка Станция Миди с Zigbee", 13000, colors=["оранжевый"]),
+    ]
+    db = await _make_db(tmp_path)
+    repo = ArbitrageRepository(db)
+    scanner = await _make_scanner(db, config, products)
+    qid = await repo.add_query("Станция Миди", subject_id=_SUBJECT)
+    await repo.set_query_keywords(qid, include="черн,серый", exclude="")
+
+    await scanner.scan_once()
+
+    # Orange dropped despite identical (colourless) title; black + grey kept.
+    assert await _recorded_nm_ids(db) == {301, 302}
     await db.close()
