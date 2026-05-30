@@ -98,18 +98,48 @@ class WbUpdateScheduler:
         self._scan_count: int = 0
         self._last_briefing_date: str | None = None
 
+    def _supervise(self, task: asyncio.Task) -> asyncio.Task:
+        """Логировать падение фоновой задачи (иначе исключение тонет в loop)."""
+        def _done(t: asyncio.Task) -> None:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                self._logger.error(
+                    "Background task %r died: %s", t.get_name(), exc, exc_info=exc,
+                )
+        task.add_done_callback(_done)
+        return task
+
+    def _touch_heartbeat(self) -> None:
+        """Обновить heartbeat-файл для Docker HEALTHCHECK (best-effort)."""
+        try:
+            path = os.getenv("HEARTBEAT_PATH", "data/.heartbeat")
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "w") as f:
+                f.write(datetime.now(timezone.utc).isoformat())
+        except OSError:
+            pass
+
     async def start(self) -> None:
         if self._task is not None:
             return
         self._stop_event.clear()
-        self._task = asyncio.create_task(self._run(), name="wb-updater")
+        self._touch_heartbeat()
+        self._task = self._supervise(asyncio.create_task(self._run(), name="wb-updater"))
         if self._seller_client and self._business_repository:
-            self._seller_task = asyncio.create_task(self._run_seller_loop(), name="seller-updater")
-            self._briefing_task = asyncio.create_task(self._run_briefing_loop(), name="briefing")
-        if self._config.arbitrage_enabled and self._arbitrage_scanner is not None:
-            self._arbitrage_task = asyncio.create_task(
-                self._run_arbitrage_loop(), name="arbitrage-scanner",
+            self._seller_task = self._supervise(
+                asyncio.create_task(self._run_seller_loop(), name="seller-updater")
             )
+            self._briefing_task = self._supervise(
+                asyncio.create_task(self._run_briefing_loop(), name="briefing")
+            )
+        if self._config.arbitrage_enabled and self._arbitrage_scanner is not None:
+            self._arbitrage_task = self._supervise(asyncio.create_task(
+                self._run_arbitrage_loop(), name="arbitrage-scanner",
+            ))
 
     async def stop(self) -> None:
         self._stop_event.set()
@@ -129,7 +159,9 @@ class WbUpdateScheduler:
             return
         if self._manual_update_task is not None and not self._manual_update_task.done():
             return
-        self._manual_update_task = asyncio.create_task(self.update_once(reason=reason))
+        self._manual_update_task = self._supervise(
+            asyncio.create_task(self.update_once(reason=reason), name="manual-update")
+        )
 
     async def update_once(self, reason: str = "manual") -> bool:
         async with self._update_lock:

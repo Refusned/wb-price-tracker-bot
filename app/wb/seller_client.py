@@ -24,6 +24,16 @@ _MARKETPLACE_MIN_INTERVAL = 0.5
 _ANALYTICS_MIN_INTERVAL = 6.0
 
 
+class SellerApiError(Exception):
+    """WB Seller API недоступен после ретраев.
+
+    Бросается вместо тихого возврата []: пустой список неотличим от
+    "событий нет", из-за чего планировщик помечал цикл успешным и терял
+    данные. С исключением цикл корректно падает в False, а
+    last_seller_update_at не обновляется (видно staleness в /status).
+    """
+
+
 @dataclass(slots=True)
 class SaleEvent:
     """A sale OR return event (is_return=True if return)."""

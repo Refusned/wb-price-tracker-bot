@@ -2,6 +2,34 @@
 
 Формат: [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/) · версионирование [SemVer](https://semver.org/lang/ru/).
 
+## [Unreleased]
+
+### Security
+- Deny-by-default авторизация: пустой `ALLOWED_USER_IDS` теперь закрывает
+  доступ всем (раньше — открывал). Глобальный access-middleware.
+- HMAC-подпись мутирующих inline-кнопок (`md:*`, `purprompt:*`) +
+  startup-check на `CALLBACK_SIGNING_SECRET` при `SHADOW_MODE=false`.
+- `SHADOW_MODE` теперь реально применяется (отключает автономные наблюдения).
+- Удалены утёкшие операционные заметки из репозитория и его истории
+  (инфраструктура, секрет); добавлены в `.gitignore`/`.dockerignore`.
+- Docker: non-root пользователь, HEALTHCHECK, `.env`/`data/` исключены из образа.
+
+### Fixed
+- Денежная безопасность: гейт тарифов AND→OR (алерт не уходит с
+  захардкоженным тарифом); атомарный `add_purchase` (без гонки rowid);
+  таймзона брифинга (МСК) + персист даты; Seller API бросает ошибку вместо
+  тихого `[]`.
+- Ретеншен `arb_candidates`/наблюдений (БД больше не растёт бесконечно).
+- Markdown-экранирование пользовательского текста и имён товаров.
+- Трейсбеки больше не утекают пользователю; лимит длины `/spp_history`.
+- Реализована команда `/insights` (была в меню без обработчика).
+
+### Added
+- Тесты денежной формулы (`compute_arbitrage_margin` по ground-truth),
+  атомарности вставок, ретеншена и гейта тарифов. Всего 122 теста.
+- CI: lint (ruff) + type-check (mypy, advisory) + coverage gate.
+- `requirements-dev.txt`, `ruff.toml`, `mypy.ini`, `healthcheck.py`.
+
 ## [1.0.0] — 2026-05-21
 
 Первый тегированный релиз. Бот стабильно работает 24/7 в Docker на VPS.
