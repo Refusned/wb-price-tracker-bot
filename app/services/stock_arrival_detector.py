@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.security import sign_payload
 from app.storage.business_repository import BusinessRepository
 from app.storage.repositories import SubscriberRepository
 from app.storage.stock_arrival_repository import StockArrivalRepository
@@ -26,6 +27,7 @@ class StockArrivalDetector:
         subscriber_repository: SubscriberRepository,
         bot: Bot,
         delta_threshold: int = 5,
+        callback_signing_secret: str = "",
         logger: logging.Logger | None = None,
     ) -> None:
         raw_threshold = os.getenv("STOCK_ARRIVAL_DELTA_THRESHOLD", "").strip()
@@ -39,6 +41,7 @@ class StockArrivalDetector:
         self._subscriber_repository = subscriber_repository
         self._bot = bot
         self._delta_threshold = int(delta_threshold)
+        self._callback_secret = callback_signing_secret
         self._logger = logger or logging.getLogger(self.__class__.__name__)
 
     async def scan(self) -> int:
@@ -101,7 +104,7 @@ class StockArrivalDetector:
 
         if chat_id is not None:
             for prompt, name in messages:
-                text, keyboard = self._build_message(prompt, name)
+                text, keyboard = self._build_message(prompt, name, self._callback_secret)
                 try:
                     await self._bot.send_message(chat_id, text, reply_markup=keyboard)
                 except Exception:
@@ -157,7 +160,7 @@ class StockArrivalDetector:
         ]
 
     @staticmethod
-    def _build_message(prompt: dict, name: str | None) -> tuple[str, InlineKeyboardMarkup]:
+    def _build_message(prompt: dict, name: str | None, secret: str = "") -> tuple[str, InlineKeyboardMarkup]:
         supplier_article = prompt.get("supplier_article")
         article_suffix = f" ({supplier_article})" if supplier_article else ""
         lines = [
@@ -180,11 +183,11 @@ class StockArrivalDetector:
                 [
                     InlineKeyboardButton(
                         text="💰 Указать цену",
-                        callback_data=f"purprompt:price:{prompt['id']}",
+                        callback_data=sign_payload(f"purprompt:price:{prompt['id']}", secret),
                     ),
                     InlineKeyboardButton(
                         text="⏭ Пропустить",
-                        callback_data=f"purprompt:skip:{prompt['id']}",
+                        callback_data=sign_payload(f"purprompt:skip:{prompt['id']}", secret),
                     ),
                 ]
             ]

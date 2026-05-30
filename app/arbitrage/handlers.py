@@ -26,6 +26,7 @@ from app.arbitrage.repository import NM_LABELS, ArbitrageRepository
 from app.arbitrage.scanner import ArbitrageScanner
 from app.config import AppConfig
 from app.handlers.common import ensure_allowed, remember_subscriber
+from app.security import safe_md
 from app.storage.repositories import SubscriberRepository
 
 logger = logging.getLogger(__name__)
@@ -95,9 +96,9 @@ def get_router(
         try:
             qid = await arb_repo.add_query(query)
             await message.answer(f"✅ Запрос #{qid} добавлен: «{query}»")
-        except Exception as exc:
+        except Exception:
             logger.exception("arb_add failed")
-            await message.answer(f"❌ Ошибка: {exc}")
+            await message.answer("❌ Не удалось добавить запрос. Подробности в логах.")
 
     # ── /arb_list ───────────────────────────────────────────────
     @router.message(Command("arb_list"))
@@ -117,9 +118,9 @@ def get_router(
             if r.get("subject_id"):
                 subj_info = f" → subj #{r['subject_id']}"
                 if r.get("subject_name"):
-                    subj_info = f" → {r['subject_name']}"
+                    subj_info = f" → {safe_md(r['subject_name'])}"
             lines.append(
-                f"#{r['id']} «{r['query']}»{subj_info}\n"
+                f"#{r['id']} «{safe_md(r['query'])}»{subj_info}\n"
                 f"   В каталоге: {r['last_found_count']}, последний скан: {last}"
             )
             # Hint: if cohort found but no observations in that category yet
@@ -129,7 +130,7 @@ def get_router(
                 )
                 if cat is None or cat.get("samples", 0) < 3:
                     hints.append(
-                        f"⚠️ #{r['id']} «{r['query']}» — нет СПП-наблюдений "
+                        f"⚠️ #{r['id']} «{safe_md(r['query'])}» — нет СПП-наблюдений "
                         f"для категории #{r['subject_id']}. "
                         f"Чтобы получать алерты, добавь 3+ наблюдения: "
                         f"`/arb_observe <nm> <моя_цена> <публич>`"
@@ -200,9 +201,9 @@ def get_router(
         exc = exclude if exclude is not None else q.get("exclude_keywords")
         await arb_repo.set_query_keywords(qid, include=inc, exclude=exc)
         await message.answer(
-            f"✅ Фильтр запроса #{qid} «{q['query']}»:\n"
-            f"• include: `{inc or '—'}`\n"
-            f"• exclude: `{exc or '—'}`",
+            f"✅ Фильтр запроса #{qid} «{safe_md(q['query'])}»:\n"
+            f"• include: `{safe_md(inc or '—')}`\n"
+            f"• exclude: `{safe_md(exc or '—')}`",
             parse_mode="Markdown",
         )
 
@@ -225,7 +226,7 @@ def get_router(
             )
             name = c.get("name") or ""
             if name:
-                lines.append(f"   {name[:60]}")
+                lines.append(f"   {safe_md(name[:60])}")
         await message.answer("\n".join(lines), parse_mode="Markdown")
 
     # ── /arb_mark (ground-truth label) ──────────────────────────
@@ -249,10 +250,10 @@ def get_router(
         note = tokens[3].strip() if len(tokens) > 3 else None
         try:
             await arb_repo.add_nm_label(nm_id, label, note=note)
-            await message.answer(f"✅ nm {nm_id} помечен: *{label}*", parse_mode="Markdown")
-        except Exception as exc:
+            await message.answer(f"✅ nm {nm_id} помечен: *{safe_md(label)}*", parse_mode="Markdown")
+        except Exception:
             logger.exception("arb_mark failed")
-            await message.answer(f"❌ Ошибка: {exc}")
+            await message.answer("❌ Не удалось сохранить метку. Подробности в логах.")
 
     # ── /arb_my_spp ─────────────────────────────────────────────
     @router.message(Command("arb_my_spp"))
@@ -269,7 +270,7 @@ def get_router(
         lines = ["📊 *Моя buyer-side СПП по категориям (30д):*", ""]
         for c in top:
             lines.append(
-                f"• {c['subject_name']}: AVG {c['avg_spp']:.1f}% "
+                f"• {safe_md(c['subject_name'])}: AVG {c['avg_spp']:.1f}% "
                 f"(samples={c['samples']})"
             )
         await message.answer("\n".join(lines), parse_mode="Markdown")
@@ -289,7 +290,7 @@ def get_router(
         lines = ["🏆 *Топ-5 категорий с моей высокой СПП:*", ""]
         for i, c in enumerate(top, 1):
             lines.append(
-                f"{i}. {c['subject_name']} — {c['avg_spp']:.1f}% (n={c['samples']})"
+                f"{i}. {safe_md(c['subject_name'])} — {c['avg_spp']:.1f}% (n={c['samples']})"
             )
         lines.append("\nДобавляй запросы в эти категории через `/arb_add`.")
         await message.answer("\n".join(lines), parse_mode="Markdown")
@@ -335,9 +336,9 @@ def get_router(
                 f"({public_price - my_price}₽ от {public_price}₽)",
                 parse_mode="Markdown",
             )
-        except Exception as exc:
+        except Exception:
             logger.exception("arb_observe failed")
-            await message.answer(f"❌ Ошибка: {exc}")
+            await message.answer("❌ Не удалось записать наблюдение. Подробности в логах.")
 
     # ── /arb_quickadd ───────────────────────────────────────────
     @router.message(Command("arb_quickadd"))
@@ -476,7 +477,7 @@ def get_router(
             # Build summary with per-query breakdown
             queries = await arb_repo.list_queries(only_enabled=True)
             lines = [
-                f"✅ Скан завершён.",
+                "✅ Скан завершён.",
                 f"Запросов: {result['queries']}",
                 f"Кандидатов (с СПП): {result['candidates']}",
                 f"Отправлено алертов: {result['alerted']}",
@@ -487,7 +488,7 @@ def get_router(
             for q in queries:
                 found = q.get("last_found_count", 0)
                 subj = q.get("subject_name") or (f"subj#{q['subject_id']}" if q.get("subject_id") else "?")
-                lines.append(f"• «{q['query']}» → {subj}: {found} товаров")
+                lines.append(f"• «{safe_md(q['query'])}» → {safe_md(subj)}: {found} товаров")
                 if q.get("subject_id") and found > 0:
                     cat = await arb_repo.get_category_avg_spp(
                         q["subject_id"], days=30, min_samples=1,
@@ -504,9 +505,9 @@ def get_router(
                 lines.append("Добавь `/arb_observe <nm> <моя_цена> <публич_цена>` "
                              "для 3+ товаров в этих категориях — сканер начнёт алертить.")
             await message.answer("\n".join(lines), parse_mode="Markdown")
-        except Exception as exc:
+        except Exception:
             logger.exception("arb_scan_now failed")
-            await message.answer(f"❌ Ошибка сканера: {exc}")
+            await message.answer("❌ Ошибка сканера. Подробности в логах.")
 
     # ── Reply-keyboard buttons (submenu shortcuts) ─────────────
     @router.message(lambda m: m.text == "🔥 Свежие связки")

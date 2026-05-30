@@ -145,7 +145,6 @@ def build_dispatcher(
         # auto_observer required for arb_quickadd / arb_bulk. Fallback empty stub
         # if for some reason it's None (shouldn't happen in main.py wiring).
         if auto_observer is None:
-            from app.arbitrage.auto_observer import AutoObserver as _AO
             # This branch shouldn't trigger; defensive
             raise RuntimeError("auto_observer must be provided when arbitrage_enabled")
         dp.include_router(

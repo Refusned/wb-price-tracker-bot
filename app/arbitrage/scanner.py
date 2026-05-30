@@ -23,7 +23,6 @@ Exclude rules (Round 4):
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import statistics
 from datetime import datetime, timezone
@@ -32,7 +31,6 @@ from aiogram import Bot
 
 from app.arbitrage.formatting import build_alert_message
 from app.arbitrage.margin import (
-    MarginBreakdown,
     compute_arbitrage_margin,
     decompose_composite_spp,
     estimate_hold_days_from_feedbacks,
@@ -290,9 +288,6 @@ class ArbitrageScanner:
             return None
 
         subject_id = prod.get("subjectId") if isinstance(prod.get("subjectId"), int) else None
-        # /review fix: extract subjectName from raw payload for /arb_my_spp display.
-        # Falls back to None if WB omits it (then /arb_my_spp shows '?').
-        subject_name = (prod.get("subjectName") or "").strip() or None
         name = (prod.get("name") or "").strip() or None
         brand = (prod.get("brand") or "").strip() or None
         feedbacks = int(prod.get("feedbacks") or 0)

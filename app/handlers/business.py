@@ -326,9 +326,9 @@ def get_router(
         # Auto-observe buyer-side personal СПП for arbitrage scanner.
         # Best-effort: never blocks purchase. Only when nm_id known directly
         # (supplier_article-only purchases skip this — no way to fetch WB
-        # public price without nm).
+        # public price without nm). В shadow-режиме автономные наблюдения off.
         observe_note = ""
-        if auto_observer is not None and nm_id is not None:
+        if auto_observer is not None and nm_id is not None and not config.shadow_mode:
             try:
                 obs = await auto_observer.observe(
                     nm_id=int(nm_id), paid_price_rub=int(price),

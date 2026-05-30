@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from aiogram import Router
-from aiogram.filters import Command, CommandStart
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.filters import Command
+from aiogram.types import Message
 
 from app.config import AppConfig
 from app.scheduler import WbUpdateScheduler
@@ -62,29 +62,8 @@ def get_router(
 ) -> Router:
     router = Router(name="common")
 
-    @router.message(CommandStart())
-    async def start_handler(message: Message) -> None:
-        if not await ensure_allowed(message, config):
-            return
-        await remember_subscriber(message, subscriber_repository)
-
-        text = (
-            "Привет. Я мониторю Wildberries по запросу \"{query}\".\n\n"
-            "Ценовой сканер + калькулятор маржи.\n"
-            "Команды: /help"
-        ).format(query=config.wb_query)
-
-        if config.owner_mode_enabled:
-            text += "\nРежим доступа: только разрешённые user_id."
-
-        keyboard = ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="/top10"), KeyboardButton(text="/deals")],
-                [KeyboardButton(text="/spp"), KeyboardButton(text="/status")],
-            ],
-            resize_keyboard=True,
-        )
-        await message.answer(text, reply_markup=keyboard)
+    # NB: /start обрабатывает main_menu (зарегистрирован раньше в bot.py).
+    # Здесь его нет намеренно — был дублирующий недостижимый хендлер.
 
     @router.message(Command("help"))
     async def help_handler(message: Message) -> None:
@@ -155,7 +134,6 @@ def get_router(
         min_price = await settings_repository.get_min_price_rub(config.min_price_rub)
 
         last_success = await meta_repository.get_value("last_success_update_at")
-        last_attempt = await meta_repository.get_value("last_update_attempt_at")
         last_status = await meta_repository.get_value("last_update_status")
         last_error = await meta_repository.get_value("last_update_error")
         last_alerts_sent = await meta_repository.get_value("last_alerts_sent")
@@ -166,7 +144,7 @@ def get_router(
         stale = is_cache_stale(last_success, config.max_cache_age_seconds)
 
         lines = [
-            f"📊 Статус бота",
+            "📊 Статус бота",
             "",
             f"Запрос: {config.wb_query}",
             f"Товаров в кэше: {items_count}",

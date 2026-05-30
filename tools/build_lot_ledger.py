@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import shutil
 import sqlite3
 import sys
 import time

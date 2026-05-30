@@ -530,12 +530,6 @@ class WbUpdateScheduler:
         if not chat_ids:
             return
 
-        # Get calculator params for margin estimation
-        sr = self._settings_repository
-        cfg = self._config
-        spp = await sr.get_float("spp_percent", cfg.spp_percent)
-        sell_price = await sr.get_float("sell_price_rub", cfg.sell_price_rub)
-
         # New orders
         new_orders = await self._business_repository.get_unnotified_orders(limit=10)
         notified_order_srids: list[str] = []

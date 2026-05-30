@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -163,14 +164,22 @@ class AppConfig:
     wb_buyer_cookie_path: str
     # WB destination ID for card.wb.ru (Moscow default).
     wb_buyer_dest_param: int
+    # Shadow mode: бот считает и показывает рекомендации, но НЕ выполняет
+    # автономных мутаций (auto-observer/мутирующие inline-кнопки отключены).
+    shadow_mode: bool
+    # Ретеншен арбитражных таблиц (дни). Без него БД растёт бесконечно.
+    arb_candidate_retention_days: int
+    arb_observation_retention_days: int
 
     @property
     def owner_mode_enabled(self) -> bool:
         return bool(self.allowed_user_ids)
 
     def is_user_allowed(self, user_id: int | None) -> bool:
-        if not self.owner_mode_enabled:
-            return True
+        # Deny-by-default: пустой ALLOWED_USER_IDS = доступ закрыт ВСЕМ.
+        # Владелец видит свой ID в ответе бота и добавляет его в whitelist.
+        if not self.allowed_user_ids:
+            return False
         if user_id is None:
             return False
         return user_id in self.allowed_user_ids
@@ -196,7 +205,7 @@ def load_config() -> AppConfig:
 
     poll_interval_seconds = _to_int("WB_POLL_INTERVAL_SECONDS", 600)
 
-    return AppConfig(
+    config = AppConfig(
         bot_token=bot_token,
         allowed_user_ids=_parse_allowed_ids(os.getenv("ALLOWED_USER_IDS", "")),
         wb_query=os.getenv("WB_QUERY", "товар"),
@@ -264,4 +273,24 @@ def load_config() -> AppConfig:
         arbitrage_wallet_bonus_pct=_to_float("ARBITRAGE_WALLET_BONUS_PCT", 6.0),
         wb_buyer_cookie_path=os.getenv("WB_BUYER_COOKIE_PATH", "data/wb_buyer_cookie.txt"),
         wb_buyer_dest_param=_to_int("WB_BUYER_DEST_PARAM", -1257786),
+        shadow_mode=_to_bool("SHADOW_MODE", True),
+        arb_candidate_retention_days=_to_int("ARB_CANDIDATE_RETENTION_DAYS", 90),
+        arb_observation_retention_days=_to_int("ARB_OBSERVATION_RETENTION_DAYS", 180),
     )
+
+    # Startup-проверка безопасности: вне shadow-режима мутирующие inline-кнопки
+    # подписываются HMAC, поэтому секрет обязателен. В shadow-режиме таких
+    # кнопок нет — пустой секрет допустим.
+    if not config.shadow_mode and not config.callback_signing_secret:
+        raise ValueError(
+            "CALLBACK_SIGNING_SECRET обязателен при SHADOW_MODE=false "
+            "(подпись мутирующих inline-кнопок). Сгенерируй: openssl rand -hex 32"
+        )
+
+    if not config.allowed_user_ids:
+        logging.getLogger("config").warning(
+            "ALLOWED_USER_IDS пуст — бот закрыт для ВСЕХ (deny-by-default). "
+            "Добавь свой Telegram ID в ALLOWED_USER_IDS, чтобы пользоваться ботом."
+        )
+
+    return config

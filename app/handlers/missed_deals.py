@@ -7,6 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.config import AppConfig
+from app.security import sign_payload, verify_payload
 from app.storage.missed_deal_repository import MISSED_DEAL_REASONS, MissedDealRepository
 from app.storage.repositories import SubscriberRepository
 
@@ -40,17 +41,15 @@ def get_router(
 
         await state.set_state(MissedDealStates.Tagging)
         await state.update_data(candidates=candidates, index=0, tagged=0)
-        await _send_candidate(message, candidates[0])
+        await _send_candidate(message, candidates[0], config.callback_signing_secret)
 
     @router.callback_query(MissedDealStates.Tagging, F.data.startswith("md:"))
     async def missed_deal_callback(callback: CallbackQuery, state: FSMContext) -> None:
-        data = callback.data or ""
-
-        # Codex review fix #6: owner-mode check at callback (not just at command entry).
-        # Stale buttons in forwarded messages, group additions, etc. could trigger.
-        user = callback.from_user
-        if not config.is_user_allowed(user.id if user is not None else None):
-            await callback.answer("Доступ запрещён.", show_alert=True)
+        # HMAC-проверка подписи: отсекает подделанные/битые payload до любой
+        # обработки. Авторизация уже отработала в AccessMiddleware.
+        data = verify_payload(callback.data, config.callback_signing_secret)
+        if data is None:
+            await callback.answer("Кнопка устарела или повреждена.", show_alert=True)
             return
 
         await callback.answer()
@@ -109,12 +108,12 @@ def get_router(
 
         await state.update_data(index=index, tagged=tagged)
         if callback.message is not None:
-            await _send_candidate(callback.message, candidates[index])
+            await _send_candidate(callback.message, candidates[index], config.callback_signing_secret)
 
     return router
 
 
-async def _send_candidate(message: Message, candidate: dict) -> None:
+async def _send_candidate(message: Message, candidate: dict, secret: str) -> None:
     text = (
         f"Артикул {candidate['nm_id']} ({candidate['name']})\n"
         f"Цена упала: {_money(candidate['prev_price'])}₽ → "
@@ -124,28 +123,32 @@ async def _send_candidate(message: Message, candidate: dict) -> None:
         f"Прогнозная маржа: ~{_fmt(candidate['observed_margin_estimate'])}%\n"
         "Почему не купил?"
     )
-    await message.answer(text, reply_markup=_keyboard(candidate))
+    await message.answer(text, reply_markup=_keyboard(candidate, secret))
 
 
-def _keyboard(candidate: dict) -> InlineKeyboardMarkup:
+def _keyboard(candidate: dict, secret: str) -> InlineKeyboardMarkup:
     nm_id = int(candidate["nm_id"])
     candidate_date = str(candidate["candidate_date"])
+
+    def cb(payload: str) -> str:
+        return sign_payload(payload, secret)
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="cash", callback_data=f"md:cash:{nm_id}:{candidate_date}"),
-                InlineKeyboardButton(text="too_slow", callback_data=f"md:too_slow:{nm_id}:{candidate_date}"),
+                InlineKeyboardButton(text="cash", callback_data=cb(f"md:cash:{nm_id}:{candidate_date}")),
+                InlineKeyboardButton(text="too_slow", callback_data=cb(f"md:too_slow:{nm_id}:{candidate_date}")),
             ],
             [
-                InlineKeyboardButton(text="bad_margin", callback_data=f"md:bad_margin:{nm_id}:{candidate_date}"),
+                InlineKeyboardButton(text="bad_margin", callback_data=cb(f"md:bad_margin:{nm_id}:{candidate_date}")),
                 InlineKeyboardButton(
                     text="not_interested",
-                    callback_data=f"md:not_interested:{nm_id}:{candidate_date}",
+                    callback_data=cb(f"md:not_interested:{nm_id}:{candidate_date}"),
                 ),
             ],
             [
-                InlineKeyboardButton(text="skip", callback_data="md:skip"),
-                InlineKeyboardButton(text="✋ stop", callback_data="md:stop"),
+                InlineKeyboardButton(text="skip", callback_data=cb("md:skip")),
+                InlineKeyboardButton(text="✋ stop", callback_data=cb("md:stop")),
             ],
         ]
     )
