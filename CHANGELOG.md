@@ -26,7 +26,7 @@
 
 ### Added
 - Тесты денежной формулы (`compute_arbitrage_margin` по ground-truth),
-  атомарности вставок, ретеншена и гейта тарифов. Всего 122 теста.
+  атомарности вставок, ретеншена и гейта тарифов. Всего 112 тестов.
 - CI: lint (ruff) + type-check (mypy, advisory) + coverage gate.
 - `requirements-dev.txt`, `ruff.toml`, `mypy.ini`, `healthcheck.py`.
 
