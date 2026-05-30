@@ -414,3 +414,43 @@ class ArbitrageRepository:
             (cutoff,),
         )
         return {str(r["label"]): int(r["c"]) for r in rows}
+
+    # ──────────────────────── retention ────────────────────────
+    async def count_candidates(self) -> int:
+        row = await self._db.fetchone("SELECT COUNT(*) AS c FROM arb_candidates")
+        return int(row["c"]) if row else 0
+
+    async def cleanup_candidates(self, retention_days: int) -> int:
+        """Удалить arb_candidates старше N дней. Возвращает кол-во удалённых.
+
+        arb_candidates пишется на КАЖДОМ скане (без upsert), поэтому без
+        ретеншена БД растёт безгранично. Вызывается из scan_once.
+        """
+        if retention_days <= 0:
+            return 0
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+        row = await self._db.fetchone(
+            "SELECT COUNT(*) AS c FROM arb_candidates WHERE found_at < ?", (cutoff,)
+        )
+        n = int(row["c"]) if row else 0
+        if n:
+            await self._db.execute(
+                "DELETE FROM arb_candidates WHERE found_at < ?", (cutoff,)
+            )
+        return n
+
+    async def cleanup_observations(self, retention_days: int) -> int:
+        """Удалить наблюдения СПП старше N дней. Возвращает кол-во удалённых."""
+        if retention_days <= 0:
+            return 0
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+        row = await self._db.fetchone(
+            "SELECT COUNT(*) AS c FROM arb_buyer_spp_observations WHERE observed_at < ?",
+            (cutoff,),
+        )
+        n = int(row["c"]) if row else 0
+        if n:
+            await self._db.execute(
+                "DELETE FROM arb_buyer_spp_observations WHERE observed_at < ?", (cutoff,)
+            )
+        return n

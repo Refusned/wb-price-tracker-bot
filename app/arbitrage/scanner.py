@@ -111,6 +111,23 @@ class ArbitrageScanner:
             except Exception:
                 logger.exception("ARBITRAGE: scan_query failed for %r", q.get("query"))
 
+        # Ретеншен: чистим старые кандидаты/наблюдения, чтобы БД не росла
+        # бесконечно (arb_candidates пишется на каждом скане). Best-effort.
+        try:
+            removed_c = await self._repo.cleanup_candidates(
+                self._config.arb_candidate_retention_days
+            )
+            removed_o = await self._repo.cleanup_observations(
+                self._config.arb_observation_retention_days
+            )
+            if removed_c or removed_o:
+                logger.info(
+                    "ARBITRAGE retention: removed %d candidates, %d observations",
+                    removed_c, removed_o,
+                )
+        except Exception:
+            logger.exception("ARBITRAGE: retention cleanup failed")
+
         logger.info(
             "ARBITRAGE: scan_once done queries=%d candidates=%d alerted=%d (24h total=%d)",
             len(queries), total_candidates, new_alerts_this_scan,
@@ -385,13 +402,15 @@ class ArbitrageScanner:
         # 2026-05-18 model update: category_avg IS valid for alert.
         # WB-Скидка is category-wide, financed by WB (offer 5.4) — not a
         # per-buyer personal estimate. Removed old per-nm-only gate.
-        # Still skip when both tariffs missing (silent 16%/500₽ unsafe for
-        # categories we've never seen). Confidence='low' already filtered
-        # by passes_threshold.
-        if commission_pct is None and logistics_rub is None:
+        # Money-safety: skip alert if EITHER tariff is unverified. Раньше был
+        # `and` — алерт уходил с захардкоженным 16%/500₽ для пропавшего тарифа,
+        # что для дешёвого товара превращало убыток в "прибыльный" алерт.
+        # Кандидат всё равно записан выше (для анализа), просто без алерта.
+        if commission_pct is None or logistics_rub is None:
             logger.info(
-                "ARBITRAGE: nm=%s threshold ok but tariffs unverified — skip alert",
-                nm_id,
+                "ARBITRAGE: nm=%s threshold ok but tariffs unverified "
+                "(commission=%s, logistics=%s) — skip alert",
+                nm_id, commission_pct, logistics_rub,
             )
             return False
 

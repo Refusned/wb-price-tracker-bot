@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
+
+# Брифинг привязан к МСК: владелец и WB работают в Europe/Moscow. Раньше
+# использовался наивный datetime.now() (локальное время сервера) — на VPS в
+# UTC брифинг уходил в 09:00 UTC = 12:00 МСК.
+MSK = ZoneInfo("Europe/Moscow")
 
 from app.config import AppConfig
 from app.storage.models import PriceDropEvent

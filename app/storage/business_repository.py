@@ -469,7 +469,7 @@ class BusinessRepository:
         now = datetime.now(timezone.utc).isoformat()
         total = quantity * buy_price_per_unit
         date = now[:10]
-        await self._db.execute(
+        return await self._db.execute_insert(
             """
             INSERT INTO purchases (
                 date, nm_id, supplier_article, quantity, buy_price_per_unit,
@@ -479,8 +479,6 @@ class BusinessRepository:
             (date, nm_id, supplier_article, quantity, buy_price_per_unit,
              spp_at_purchase, total, notes, now),
         )
-        row = await self._db.fetchone("SELECT last_insert_rowid() as id")
-        return int(row["id"]) if row else 0
 
     async def list_purchases(self, days: int = 30) -> list[dict]:
         start = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
