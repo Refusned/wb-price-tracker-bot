@@ -128,6 +128,23 @@ def get_router(
         briefing = await insight_engine.build_briefing()
         await message.answer(build_briefing_message(briefing))
 
+    @router.message(Command("insights"))
+    async def insights_handler(message: Message) -> None:
+        if not await ensure_allowed(message, config):
+            return
+        await remember_subscriber(message, subscriber_repository)
+        anomalies = await insight_engine.detect_anomalies()
+        if not anomalies:
+            await message.answer("✅ Аномалий не обнаружено.")
+            return
+        icon = {"critical": "🔴", "warning": "🟡", "info": "🔵"}
+        lines = ["📊 Инсайты / аномалии", ""]
+        for ins in anomalies:
+            lines.append(f"{icon.get(ins.severity, '•')} {ins.title}")
+            if ins.message:
+                lines.append(f"   {ins.message}")
+        await message.answer("\n".join(lines))
+
     @router.message(Command("returns"))
     async def returns_handler(message: Message) -> None:
         if not await ensure_allowed(message, config):

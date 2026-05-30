@@ -159,8 +159,9 @@ class AppConfig:
     # WB-Кошелёк bonus (real discount applied at checkout when paying with
     # WB Wallet balance). Constant across categories. 6% for active buyers.
     arbitrage_wallet_bonus_pct: float
-    # Path to file with buyer cookie (hot-reloaded; / arb_set_cookie command).
-    # Empty string → cookie path disabled, only manual observations used.
+    # Path to file with buyer cookie (для будущего авто-fetch личной цены).
+    # Пока не используется: команды /arb_set_cookie нет, PoW-solver отложен.
+    # Наблюдения СПП собираются вручную (/arb_observe, /buy hook).
     wb_buyer_cookie_path: str
     # WB destination ID for card.wb.ru (Moscow default).
     wb_buyer_dest_param: int
