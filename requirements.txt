@@ -6,3 +6,8 @@ certifi>=2024.0.0,<2027.0.0
 # Brotli required for aiohttp to decode WB u-search.wb.ru/v18 responses
 # (WB returns Content-Encoding: br since 2026-05).
 Brotli>=1.0,<2.0
+# tzdata REQUIRED: scheduler.py делает ZoneInfo("Europe/Moscow") на импорте.
+# python:3.12-slim НЕ содержит системную IANA-базу → без этого пакета бот
+# падает на старте с ZoneInfoNotFoundError (на dev-машинах с системной tzdata
+# баг не виден — ловится только в slim-контейнере).
+tzdata>=2024.1
