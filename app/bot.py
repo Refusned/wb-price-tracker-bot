@@ -47,6 +47,12 @@ def build_dispatcher(
 ) -> Dispatcher:
     dp = Dispatcher()
 
+    # Deny-by-default access gate. outer-middleware на update покрывает message,
+    # callback_query и все прочие типы апдейтов ДО фильтров и хендлеров.
+    # Callback-хендлеры (md:*/purprompt:*) полагаются на это: их собственная
+    # проверка is_user_allowed снята в пользу этого middleware.
+    dp.update.outer_middleware(AccessMiddleware(config))
+
     # main_menu MUST be registered FIRST — it handles /start and main
     # reply-keyboard buttons (🎯 Арбитраж / 💰 Финансы / etc.).
     dp.include_router(

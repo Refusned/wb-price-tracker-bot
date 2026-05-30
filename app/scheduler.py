@@ -404,6 +404,7 @@ class WbUpdateScheduler:
                 )
             except asyncio.TimeoutError:
                 await self.update_once(reason="polling")
+                self._touch_heartbeat()  # сигнал «цикл жив» для Docker HEALTHCHECK
 
     # ---------- Seller API polling ----------
 
@@ -649,6 +650,44 @@ class WbUpdateScheduler:
                 if now.hour == briefing_hour and now.minute >= briefing_minute:
                     # last_briefing_date персистится в meta → брифинг не
                     # дублируется после рестарта в том же дне (раньше дата жила
+                    # только в памяти и сбрасывалась при перезапуске).
+                    last = await self._meta_repository.get_value("last_briefing_date")
+                    if last != today_str:
+                        await self._send_briefing()
+                        await self._meta_repository.set_value("last_briefing_date", today_str)
+                        self._last_briefing_date = today_str
+
+    async def _send_briefing(self) -> None:
+        if not self._insight_engine:
+            return
+        try:
+            briefing = await self._insight_engine.build_briefing()
+            text = build_briefing_message(briefing)
+            chat_ids = await self._subscriber_repository.list_active_chat_ids()
+            for chat_id in chat_ids:
+                try:
+                    await self._bot.send_message(chat_id=chat_id, text=text)
+                except Exception as e:
+                    self._logger.warning("Failed to send briefing: %s", e)
+                await asyncio.sleep(0.05)
+            self._logger.info("Morning briefing sent to %s chats", len(chat_ids))
+        except Exception as exc:
+            self._logger.exception("Briefing failed: %s", exc)
+
+    async def _run_arbitrage_loop(self) -> None:
+        """Day 18+: arbitrage scanner periodic loop.
+
+        Every ``arbitrage_scan_interval_seconds``:
+            1. Refresh tariffs cache if stale (24h).
+            2. Run scanner.scan_once().
+
+        Logs every iteration; on exception continues after backoff.
+        """
+        scan_interval = max(60, self._config.arbitrage_scan_interval_seconds)
+        self._logger.info(
+            "ARBITRAGE loop started: interval=%ds, threshold PPRD≥%.2f%% AND profit≥%d₽ AND margin≥%.1f%%",
+            scan_interval,
+            self._config.arbitrage_min_pprd_percent,
             self._config.arbitrage_min_profit_rub,
             self._config.arbitrage_min_margin_percent,
         )
