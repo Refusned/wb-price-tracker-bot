@@ -115,6 +115,7 @@ async def run() -> None:
             subscriber_repository=subscriber_repository,
             bot=bot,
             delta_threshold=config.stock_arrival_delta_threshold,
+            callback_signing_secret=config.callback_signing_secret,
         )
 
         personal_spp_collector = PersonalSppAutoCollector(

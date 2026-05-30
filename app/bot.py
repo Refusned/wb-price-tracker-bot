@@ -7,6 +7,7 @@ from app.arbitrage.auto_observer import AutoObserver
 from app.arbitrage.repository import ArbitrageRepository
 from app.arbitrage.scanner import ArbitrageScanner
 from app.config import AppConfig
+from app.middlewares import AccessMiddleware
 from app.handlers import admin, business, common, decisions, main_menu, margin, missed_deals, purchase_prompts, spp_log, top10
 from app.scheduler import WbUpdateScheduler
 from app.services.insight_engine import InsightEngine

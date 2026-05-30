@@ -40,8 +40,10 @@ def test_buy_price_is_wallet_only_not_double_spp() -> None:
     """Регрессия Day 18: buy = market×(1-wallet), НЕ market×(1-composite)."""
     m = _gt_margin()
     assert m.buy_price_rub == round(MARKET * (1 - WALLET / 100))  # 10518
-    # Если бы СПП применялась дважды, buy был бы намного ниже (~8000).
-    assert m.buy_price_rub > MARKET * (1 - 0.30)
+    # Если бы СПП применялась дважды, buy ≈ 7951 (market×(1-composite≈0.29)).
+    # Граница market×(1-0.10)=10070 ловит регрессию НЕЗАВИСИМО от строки выше
+    # (раньше было ×(1-0.30)=7832 — слишком слабо, 7951>7832 проходило).
+    assert m.buy_price_rub > MARKET * (1 - 0.10)
 
 
 def test_listed_implied_matches_ground_truth() -> None:

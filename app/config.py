@@ -172,13 +172,11 @@ class AppConfig:
     arb_candidate_retention_days: int
     arb_observation_retention_days: int
 
-    @property
-    def owner_mode_enabled(self) -> bool:
-        return bool(self.allowed_user_ids)
-
     def is_user_allowed(self, user_id: int | None) -> bool:
         # Deny-by-default: пустой ALLOWED_USER_IDS = доступ закрыт ВСЕМ.
         # Владелец видит свой ID в ответе бота и добавляет его в whitelist.
+        # (Бывшее свойство owner_mode_enabled удалено: старая семантика
+        # "owner_mode off ⇒ открыто всем" была footgun-ом.)
         if not self.allowed_user_ids:
             return False
         if user_id is None:
