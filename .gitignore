@@ -2,9 +2,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .venv/
 venv/
 .env
+.env.*
+!.env.example
 data/
 *.db
 *.sqlite3
@@ -14,3 +18,14 @@ data/
 .vscode/
 .python-version
 *.bak
+.coverage
+htmlcov/
+
+# Локальные оперативные заметки — НЕ публиковать.
+# Содержат инфраструктуру (IP/SSH/пути прод), бизнес-стратегию и т.п.
+CLAUDE.md
+SPRINT_DAY0.md
+SPRINT_STATUS.md
+REMINDER_DAY6_GATE.md
+/plans/
+*.local.md
