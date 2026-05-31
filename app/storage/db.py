@@ -286,6 +286,21 @@ class Database:
             await conn.execute(query, params or ())
             await conn.commit()
 
+    async def execute_insert(self, query: str, params: Sequence[Any] | None = None) -> int:
+        """Атомарный INSERT + возврат rowid под ОДНИМ lock'ом.
+
+        Заменяет небезопасную пару execute()+fetchone(last_insert_rowid()),
+        где между двумя захватами lock'а конкурентная вставка могла подменить
+        rowid. lastrowid читается с того же cursor — гонки нет.
+        """
+        conn = self._require_conn()
+        async with self._lock:
+            cursor = await conn.execute(query, params or ())
+            last_id = cursor.lastrowid
+            await cursor.close()
+            await conn.commit()
+            return int(last_id or 0)
+
     async def fetchone(self, query: str, params: Sequence[Any] | None = None) -> aiosqlite.Row | None:
         conn = self._require_conn()
         async with self._lock:

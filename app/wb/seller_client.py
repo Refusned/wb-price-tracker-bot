@@ -24,6 +24,16 @@ _MARKETPLACE_MIN_INTERVAL = 0.5
 _ANALYTICS_MIN_INTERVAL = 6.0
 
 
+class SellerApiError(Exception):
+    """WB Seller API недоступен после ретраев.
+
+    Бросается вместо тихого возврата []: пустой список неотличим от
+    "событий нет", из-за чего планировщик помечал цикл успешным и терял
+    данные. С исключением цикл корректно падает в False, а
+    last_seller_update_at не обновляется (видно staleness в /status).
+    """
+
+
 @dataclass(slots=True)
 class SaleEvent:
     """A sale OR return event (is_return=True if return)."""
@@ -131,6 +141,8 @@ class SellerClient:
         params = {"dateFrom": date_from.strftime("%Y-%m-%dT%H:%M:%S"), "flag": str(flag)}
         url = f"{_STATISTICS_BASE}/api/v1/supplier/sales"
         data: list = []
+        got = False
+        last_exc: Exception | None = None
         for attempt in range(3):
             await self._throttle("stats")
             try:
@@ -142,10 +154,16 @@ class SellerClient:
                         continue
                     resp.raise_for_status()
                     data = await resp.json() or []
+                    got = True
                     break
             except aiohttp.ClientError as e:
+                last_exc = e
                 self._logger.warning("get_sales failed (attempt %d): %s", attempt + 1, e)
                 await asyncio.sleep(5)
+        if not got:
+            # Все попытки исчерпаны. НЕ возвращаем [] — оно неотличимо от
+            # "продаж нет"; бросаем, чтобы цикл пометился failed.
+            raise SellerApiError("get_sales failed after 3 attempts") from last_exc
         if not isinstance(data, list):
             data = []
 
@@ -182,6 +200,8 @@ class SellerClient:
         params = {"dateFrom": date_from.strftime("%Y-%m-%dT%H:%M:%S"), "flag": str(flag)}
         url = f"{_STATISTICS_BASE}/api/v1/supplier/orders"
         data: list = []
+        got = False
+        last_exc: Exception | None = None
         for attempt in range(3):
             await self._throttle("stats")
             try:
@@ -193,10 +213,14 @@ class SellerClient:
                         continue
                     resp.raise_for_status()
                     data = await resp.json() or []
+                    got = True
                     break
             except aiohttp.ClientError as e:
+                last_exc = e
                 self._logger.warning("get_orders failed (attempt %d): %s", attempt + 1, e)
                 await asyncio.sleep(5)
+        if not got:
+            raise SellerApiError("get_orders failed after 3 attempts") from last_exc
         if not isinstance(data, list):
             data = []
 

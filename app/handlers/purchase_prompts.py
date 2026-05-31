@@ -7,6 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from app.config import AppConfig
+from app.security import verify_payload
 from app.storage.business_repository import BusinessRepository
 from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
 from app.storage.repositories import SubscriberRepository
@@ -57,12 +58,12 @@ def get_router(
 
     @router.callback_query(F.data.startswith("purprompt:"))
     async def purchase_prompt_callback(callback: CallbackQuery, state: FSMContext) -> None:
-        user = callback.from_user
-        if not config.is_user_allowed(user.id if user is not None else None):
-            await callback.answer("Доступ запрещён.", show_alert=True)
+        # HMAC-проверка подписи (авторизация уже в AccessMiddleware).
+        data = verify_payload(callback.data, config.callback_signing_secret)
+        if data is None:
+            await callback.answer("Кнопка устарела или повреждена.", show_alert=True)
             return
 
-        data = callback.data or ""
         parts = data.split(":")
         if len(parts) != 3:
             await callback.answer("Некорректная кнопка.", show_alert=True)
@@ -171,7 +172,8 @@ def get_router(
 
         # Day 18+: auto-record buyer-side personal СПП observation.
         # Same as /buy hook in business.py — best-effort, never blocks.
-        if auto_observer is not None:
+        # В shadow-режиме автономные наблюдения отключены (бот только считает).
+        if auto_observer is not None and not config.shadow_mode:
             try:
                 await auto_observer.observe(
                     nm_id=nm_id, paid_price_rub=int(price),

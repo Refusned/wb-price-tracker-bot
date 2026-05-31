@@ -128,6 +128,23 @@ def get_router(
         briefing = await insight_engine.build_briefing()
         await message.answer(build_briefing_message(briefing))
 
+    @router.message(Command("insights"))
+    async def insights_handler(message: Message) -> None:
+        if not await ensure_allowed(message, config):
+            return
+        await remember_subscriber(message, subscriber_repository)
+        anomalies = await insight_engine.detect_anomalies()
+        if not anomalies:
+            await message.answer("✅ Аномалий не обнаружено.")
+            return
+        icon = {"critical": "🔴", "warning": "🟡", "info": "🔵"}
+        lines = ["📊 Инсайты / аномалии", ""]
+        for ins in anomalies:
+            lines.append(f"{icon.get(ins.severity, '•')} {ins.title}")
+            if ins.message:
+                lines.append(f"   {ins.message}")
+        await message.answer("\n".join(lines))
+
     @router.message(Command("returns"))
     async def returns_handler(message: Message) -> None:
         if not await ensure_allowed(message, config):
@@ -326,9 +343,9 @@ def get_router(
         # Auto-observe buyer-side personal СПП for arbitrage scanner.
         # Best-effort: never blocks purchase. Only when nm_id known directly
         # (supplier_article-only purchases skip this — no way to fetch WB
-        # public price without nm).
+        # public price without nm). В shadow-режиме автономные наблюдения off.
         observe_note = ""
-        if auto_observer is not None and nm_id is not None:
+        if auto_observer is not None and nm_id is not None and not config.shadow_mode:
             try:
                 obs = await auto_observer.observe(
                     nm_id=int(nm_id), paid_price_rub=int(price),

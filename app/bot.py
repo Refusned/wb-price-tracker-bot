@@ -7,6 +7,7 @@ from app.arbitrage.auto_observer import AutoObserver
 from app.arbitrage.repository import ArbitrageRepository
 from app.arbitrage.scanner import ArbitrageScanner
 from app.config import AppConfig
+from app.middlewares import AccessMiddleware
 from app.handlers import admin, business, common, decisions, main_menu, margin, missed_deals, purchase_prompts, spp_log, top10
 from app.scheduler import WbUpdateScheduler
 from app.services.insight_engine import InsightEngine
@@ -45,6 +46,12 @@ def build_dispatcher(
     auto_observer: AutoObserver | None = None,
 ) -> Dispatcher:
     dp = Dispatcher()
+
+    # Deny-by-default access gate. outer-middleware на update покрывает message,
+    # callback_query и все прочие типы апдейтов ДО фильтров и хендлеров.
+    # Callback-хендлеры (md:*/purprompt:*) полагаются на это: их собственная
+    # проверка is_user_allowed снята в пользу этого middleware.
+    dp.update.outer_middleware(AccessMiddleware(config))
 
     # main_menu MUST be registered FIRST — it handles /start and main
     # reply-keyboard buttons (🎯 Арбитраж / 💰 Финансы / etc.).
@@ -145,7 +152,6 @@ def build_dispatcher(
         # auto_observer required for arb_quickadd / arb_bulk. Fallback empty stub
         # if for some reason it's None (shouldn't happen in main.py wiring).
         if auto_observer is None:
-            from app.arbitrage.auto_observer import AutoObserver as _AO
             # This branch shouldn't trigger; defensive
             raise RuntimeError("auto_observer must be provided when arbitrage_enabled")
         dp.include_router(

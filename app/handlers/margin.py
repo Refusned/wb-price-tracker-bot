@@ -157,7 +157,7 @@ def get_router(
         else:
             lines.append("Установите цену продажи: /setsellprice <цена>")
 
-        lines.append(f"\nИзменить: /setspp <число>")
+        lines.append("\nИзменить: /setspp <число>")
         await message.answer("\n".join(lines))
 
     @router.message(Command("setspp"))
@@ -284,10 +284,10 @@ def get_router(
             return
 
         lines = [f"Отслеживаемые артикулы ({len(articles)}):",""]
-        for nm_id, name, last_seen in articles:
+        for nm_id, name, _last_seen in articles:
             lines.append(f"{nm_id} — {name[:40]}")
-        lines.append(f"\nДобавить: /track <артикул>")
-        lines.append(f"Убрать: /untrack <артикул>")
+        lines.append("\nДобавить: /track <артикул>")
+        lines.append("Убрать: /untrack <артикул>")
         await message.answer("\n".join(lines))
 
     return router

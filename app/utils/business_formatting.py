@@ -84,7 +84,6 @@ def build_new_return_alert(sale: dict) -> str:
 
 def build_briefing_message(briefing: BriefingData) -> str:
     y = briefing.yesterday
-    t = briefing.today
     w = briefing.week
 
     lines = [
@@ -124,7 +123,7 @@ def build_briefing_message(briefing: BriefingData) -> str:
         lines.extend([
             "",
             f"💡 Рекомендуемая закупка: {briefing.recommended_buy_count} шт",
-            f"   /reorder — детали",
+            "   /reorder — детали",
         ])
 
     if briefing.insights:
@@ -253,7 +252,6 @@ def build_profit_message(data: dict, period_label: str) -> str:
     gross_total = data.get("gross_total_price", 0)
     uncov = data.get("uncovered_revenue", 0)
     tax_p = data.get("tax_percent", 2.0)
-    log_u = data.get("logistics_per_unit", 188.0)
     acq_p = data.get("acquiring_percent", 0.0)
 
     matched = data.get("matched_sold", 0)
@@ -268,9 +266,9 @@ def build_profit_message(data: dict, period_label: str) -> str:
         lines.append(f"  закрыто финотчётом (точно): {matched} шт")
         lines.append(f"  в процессе закрытия (±2.6%): {unmatched} шт")
     elif matched and not unmatched:
-        lines.append(f"  ✅ все закрыто финотчётом — точный расчёт")
+        lines.append("  ✅ все закрыто финотчётом — точный расчёт")
     elif unmatched and not matched:
-        lines.append(f"  ⚠️ нет финотчёта — оценка по /sales (±2.6%). Запусти /sync_finance")
+        lines.append("  ⚠️ нет финотчёта — оценка по /sales (±2.6%). Запусти /sync_finance")
 
     lines.extend([
         f"Возвратов: {data['total_returns']} шт",
@@ -325,7 +323,7 @@ def build_profit_message(data: dict, period_label: str) -> str:
         if missing:
             lines.append("")
             lines.append(f"ℹ️ Нет закупок для: {', '.join(missing)}")
-            lines.append(f"Добавь через /buy для точного расчёта")
+            lines.append("Добавь через /buy для точного расчёта")
 
     return "\n".join(lines)
 

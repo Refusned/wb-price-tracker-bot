@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
+
+# Брифинг привязан к МСК: владелец и WB работают в Europe/Moscow. Раньше
+# использовался наивный datetime.now() (локальное время сервера) — на VPS в
+# UTC брифинг уходил в 09:00 UTC = 12:00 МСК.
+MSK = ZoneInfo("Europe/Moscow")
 
 from app.config import AppConfig
 from app.storage.models import PriceDropEvent
@@ -91,18 +98,48 @@ class WbUpdateScheduler:
         self._scan_count: int = 0
         self._last_briefing_date: str | None = None
 
+    def _supervise(self, task: asyncio.Task) -> asyncio.Task:
+        """Логировать падение фоновой задачи (иначе исключение тонет в loop)."""
+        def _done(t: asyncio.Task) -> None:
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                self._logger.error(
+                    "Background task %r died: %s", t.get_name(), exc, exc_info=exc,
+                )
+        task.add_done_callback(_done)
+        return task
+
+    def _touch_heartbeat(self) -> None:
+        """Обновить heartbeat-файл для Docker HEALTHCHECK (best-effort)."""
+        try:
+            path = os.getenv("HEARTBEAT_PATH", "data/.heartbeat")
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "w") as f:
+                f.write(datetime.now(timezone.utc).isoformat())
+        except OSError:
+            pass
+
     async def start(self) -> None:
         if self._task is not None:
             return
         self._stop_event.clear()
-        self._task = asyncio.create_task(self._run(), name="wb-updater")
+        self._touch_heartbeat()
+        self._task = self._supervise(asyncio.create_task(self._run(), name="wb-updater"))
         if self._seller_client and self._business_repository:
-            self._seller_task = asyncio.create_task(self._run_seller_loop(), name="seller-updater")
-            self._briefing_task = asyncio.create_task(self._run_briefing_loop(), name="briefing")
-        if self._config.arbitrage_enabled and self._arbitrage_scanner is not None:
-            self._arbitrage_task = asyncio.create_task(
-                self._run_arbitrage_loop(), name="arbitrage-scanner",
+            self._seller_task = self._supervise(
+                asyncio.create_task(self._run_seller_loop(), name="seller-updater")
             )
+            self._briefing_task = self._supervise(
+                asyncio.create_task(self._run_briefing_loop(), name="briefing")
+            )
+        if self._config.arbitrage_enabled and self._arbitrage_scanner is not None:
+            self._arbitrage_task = self._supervise(asyncio.create_task(
+                self._run_arbitrage_loop(), name="arbitrage-scanner",
+            ))
 
     async def stop(self) -> None:
         self._stop_event.set()
@@ -122,7 +159,9 @@ class WbUpdateScheduler:
             return
         if self._manual_update_task is not None and not self._manual_update_task.done():
             return
-        self._manual_update_task = asyncio.create_task(self.update_once(reason=reason))
+        self._manual_update_task = self._supervise(
+            asyncio.create_task(self.update_once(reason=reason), name="manual-update")
+        )
 
     async def update_once(self, reason: str = "manual") -> bool:
         async with self._update_lock:
@@ -365,6 +404,7 @@ class WbUpdateScheduler:
                 )
             except asyncio.TimeoutError:
                 await self.update_once(reason="polling")
+                self._touch_heartbeat()  # сигнал «цикл жив» для Docker HEALTHCHECK
 
     # ---------- Seller API polling ----------
 
@@ -530,12 +570,6 @@ class WbUpdateScheduler:
         if not chat_ids:
             return
 
-        # Get calculator params for margin estimation
-        sr = self._settings_repository
-        cfg = self._config
-        spp = await sr.get_float("spp_percent", cfg.spp_percent)
-        sell_price = await sr.get_float("sell_price_rub", cfg.sell_price_rub)
-
         # New orders
         new_orders = await self._business_repository.get_unnotified_orders(limit=10)
         notified_order_srids: list[str] = []
@@ -611,15 +645,17 @@ class WbUpdateScheduler:
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=60)
             except asyncio.TimeoutError:
-                now = datetime.now()  # local time
+                now = datetime.now(MSK)  # МСК, не наивное локальное время сервера
                 today_str = now.strftime("%Y-%m-%d")
-                if (
-                    now.hour == briefing_hour
-                    and now.minute >= briefing_minute
-                    and self._last_briefing_date != today_str
-                ):
-                    await self._send_briefing()
-                    self._last_briefing_date = today_str
+                if now.hour == briefing_hour and now.minute >= briefing_minute:
+                    # last_briefing_date персистится в meta → брифинг не
+                    # дублируется после рестарта в том же дне (раньше дата жила
+                    # только в памяти и сбрасывалась при перезапуске).
+                    last = await self._meta_repository.get_value("last_briefing_date")
+                    if last != today_str:
+                        await self._send_briefing()
+                        await self._meta_repository.set_value("last_briefing_date", today_str)
+                        self._last_briefing_date = today_str
 
     async def _send_briefing(self) -> None:
         if not self._insight_engine:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from aiogram import Router
@@ -7,10 +8,13 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from app.config import AppConfig
+from app.security import safe_md
 from app.services.personal_spp_auto_collector import PersonalSppAutoCollector
 from app.storage.personal_spp_repository import PersonalSppRepository
 
 from .common import ensure_allowed
+
+logger = logging.getLogger(__name__)
 
 
 def get_router(
@@ -76,15 +80,21 @@ def get_router(
             await message.answer(f"За последние {days} дней записей СПП нет.")
             return
 
+        # Лимит строк, чтобы не упереться в 4096-символьный лимит Telegram.
+        max_rows = 80
+        shown = rows[:max_rows]
         lines = [
             "| Дата | Категория | СПП | Источник |",
             "|---|---|---:|---|",
         ]
-        for row in rows:
+        for row in shown:
             date = row["snapshot_at"][:10]
             lines.append(
-                f"| {date} | {row['category']} | {_fmt(row['spp_percent'])}% | {row['source']} |"
+                f"| {date} | {safe_md(row['category'])} | "
+                f"{_fmt(row['spp_percent'])}% | {safe_md(row['source'])} |"
             )
+        if len(rows) > max_rows:
+            lines.append(f"\n…показаны последние {max_rows} из {len(rows)} записей.")
         await message.answer("\n".join(lines), parse_mode="Markdown")
 
     @router.message(Command("spp_trend"))
@@ -126,8 +136,9 @@ def get_router(
             return
         try:
             n = await personal_spp_collector.maybe_collect(force=True)
-        except Exception as exc:
-            await message.answer(f"Ошибка при сборе СПП: {exc}")
+        except Exception:
+            logger.exception("refresh_spp failed")
+            await message.answer("Ошибка при сборе СПП. Подробности в логах.")
             return
         if n == 0:
             await message.answer(

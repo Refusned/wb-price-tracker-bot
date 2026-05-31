@@ -11,6 +11,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: Lint & type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Ruff (real errors — blocking)
+        run: ruff check app/ main.py tests/ tools/ healthcheck.py
+
+      - name: Mypy (advisory)
+        continue-on-error: true
+        run: mypy app/ main.py
+
   test:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -28,10 +52,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install dependencies
+      - name: Install dev dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
-      - name: Run pytest
-        run: pytest tests/ -v
+      - name: Run pytest with coverage
+        # Порог = пол ниже измеренного покрытия (35%) с запасом против флаки.
+        # Это ratchet: поднимать по мере роста покрытия, не опускать. Не 70% —
+        # это сразу красило бы CI (большие модули scheduler/clients без тестов).
+        run: pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=30
