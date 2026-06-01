@@ -66,8 +66,14 @@ class LLMClient:
         user: str,
         temperature: float = 0.3,
         num_predict: int | None = None,
+        think: bool | None = None,
     ) -> str:
         """Однократный chat-запрос. Возвращает текст ассистента (stripped).
+
+        think: для thinking-моделей (deepseek-v4-pro и т.п.). False — отключает
+        «размышление», чтобы весь num_predict шёл в content. Если оставить
+        thinking включённым, на длинных промптах бюджет токенов уходит в
+        message.thinking и content приходит ПУСТЫМ. None — поле не отправляем.
 
         Raises:
             LLMError: если все попытки провалились или ответ пуст.
@@ -84,6 +90,8 @@ class LLMClient:
             "stream": False,
             "options": options,
         }
+        if think is not None:
+            payload["think"] = think
         url = f"{self._base_url}/api/chat"
 
         last_exc: Exception | None = None

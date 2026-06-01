@@ -66,6 +66,7 @@ async def test_generate_returns_content_and_posts_correctly() -> None:
     assert body["messages"][1] == {"role": "user", "content": "usr"}
     assert body["options"]["temperature"] == 0.2
     assert body["options"]["num_predict"] == 200
+    assert "think" not in body  # если не задан — поле не отправляем
 
 
 async def test_generate_retries_then_succeeds() -> None:
@@ -94,3 +95,10 @@ async def test_generate_raises_on_empty_content() -> None:
     with pytest.raises(LLMError):
         await client.generate(system="s", user="u")
     assert len(session.calls) == 2
+
+
+async def test_think_param_forwarded_when_set() -> None:
+    session = _FakeSession([_ok("ответ")])
+    client = LLMClient(session, api_key="K", backoff_seconds=0)  # type: ignore[arg-type]
+    await client.generate(system="s", user="u", think=False)
+    assert session.calls[0]["json"]["think"] is False

@@ -159,7 +159,9 @@ class FeedbackResponder:
     ) -> bool:
         # 1) LLM-черновик
         try:
-            draft = await self._llm.generate(system=_SYSTEM_PROMPT, user=prompt, num_predict=400)
+            draft = await self._llm.generate(
+                system=_SYSTEM_PROMPT, user=prompt, num_predict=400, think=False,
+            )
         except LLMError as exc:
             self._logger.warning("LLM failed for %s %s: %s", kind, item_id, exc)
             await self._record(kind, item_id, original_text, "", "failed",

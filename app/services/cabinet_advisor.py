@@ -40,8 +40,11 @@ class CabinetAdvisor:
         """Собрать разбор кабинета с советами. Может бросить LLMError."""
         briefing = await self._insights.build_briefing()
         summary = self._serialize(briefing)
+        # think=False обязателен: deepseek-v4-pro — thinking-модель, иначе на
+        # длинном промпте весь бюджет уходит в «размышление» и content пуст.
         return await self._llm.generate(
-            system=_SYSTEM_PROMPT, user=summary, temperature=0.4, num_predict=900,
+            system=_SYSTEM_PROMPT, user=summary, temperature=0.4,
+            num_predict=1500, think=False,
         )
 
     @staticmethod
