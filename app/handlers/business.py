@@ -12,7 +12,9 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from app.config import AppConfig
+from app.llm.client import LLMError
 from app.scheduler import WbUpdateScheduler
+from app.services.cabinet_advisor import CabinetAdvisor
 from app.services.insight_engine import InsightEngine
 from app.storage.business_repository import BusinessRepository
 from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
@@ -40,6 +42,7 @@ def get_router(
     updater: WbUpdateScheduler,
     decision_snapshot_repo: DecisionSnapshotRepository | None = None,
     auto_observer: "object | None" = None,
+    cabinet_advisor: CabinetAdvisor | None = None,
 ) -> Router:
     router = Router(name="business")
 
@@ -127,6 +130,28 @@ def get_router(
         await remember_subscriber(message, subscriber_repository)
         briefing = await insight_engine.build_briefing()
         await message.answer(build_briefing_message(briefing))
+
+    @router.message(Command("advice"))
+    async def advice_handler(message: Message) -> None:
+        """LLM-разбор кабинета с советами по продажам (Фаза 2, read-only)."""
+        if not await ensure_allowed(message, config):
+            return
+        await remember_subscriber(message, subscriber_repository)
+        if cabinet_advisor is None:
+            await message.answer(
+                "🤖 Советник недоступен. Нужны OLLAMA_API_KEY и WB_SELLER_API_KEY."
+            )
+            return
+        await message.answer("⏳ Анализирую кабинет, это займёт несколько секунд…")
+        try:
+            advice = await cabinet_advisor.build_advice()
+        except LLMError:
+            await message.answer("❌ LLM сейчас недоступна — попробуй позже.")
+            return
+        except Exception:
+            await message.answer("❌ Не удалось собрать разбор. Подробности в логах.")
+            return
+        await message.answer(f"📈 Разбор кабинета\n\n{advice[:3900]}")
 
     @router.message(Command("insights"))
     async def insights_handler(message: Message) -> None:

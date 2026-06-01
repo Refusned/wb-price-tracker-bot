@@ -64,6 +64,7 @@ class WbUpdateScheduler:
         insight_engine: InsightEngine | None = None,
         arbitrage_scanner: "object | None" = None,
         tariffs_cache: "object | None" = None,
+        feedback_responder: "object | None" = None,
     ) -> None:
         self._config = config
         self._wb_client = wb_client
@@ -83,12 +84,14 @@ class WbUpdateScheduler:
         self._insight_engine = insight_engine
         self._arbitrage_scanner = arbitrage_scanner
         self._tariffs_cache = tariffs_cache
+        self._feedback_responder = feedback_responder
 
         self._logger = logging.getLogger(self.__class__.__name__)
         self._task: asyncio.Task | None = None
         self._seller_task: asyncio.Task | None = None
         self._briefing_task: asyncio.Task | None = None
         self._arbitrage_task: asyncio.Task | None = None
+        self._feedback_task: asyncio.Task | None = None
         self._manual_update_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._update_lock = asyncio.Lock()
@@ -140,10 +143,14 @@ class WbUpdateScheduler:
             self._arbitrage_task = self._supervise(asyncio.create_task(
                 self._run_arbitrage_loop(), name="arbitrage-scanner",
             ))
+        if self._feedback_loop_enabled():
+            self._feedback_task = self._supervise(asyncio.create_task(
+                self._run_feedback_loop(), name="feedback-responder",
+            ))
 
     async def stop(self) -> None:
         self._stop_event.set()
-        for task_attr in ("_task", "_seller_task", "_briefing_task", "_arbitrage_task"):
+        for task_attr in ("_task", "_seller_task", "_briefing_task", "_arbitrage_task", "_feedback_task"):
             task = getattr(self, task_attr)
             if task is None:
                 continue
@@ -712,3 +719,47 @@ class WbUpdateScheduler:
             except asyncio.TimeoutError:
                 pass
         self._logger.info("ARBITRAGE loop stopped")
+
+    # ---------- Feedback auto-reply loop (Фаза 1) ----------
+
+    def _feedback_loop_enabled(self) -> bool:
+        """Авто-ответы запускаются ТОЛЬКО при наличии респондера И флаге
+        FEEDBACK_AUTO_REPLY_ENABLED=true. Вынесено отдельно для тестируемости
+        kill-switch'а (регрессия, запускающая цикл при выключенном флаге,
+        молча начала бы автопостинг)."""
+        return self._feedback_responder is not None and bool(
+            getattr(self._config, "feedback_auto_reply_enabled", False)
+        )
+
+    async def _run_feedback_loop(self) -> None:
+        """Периодический автоответ на отзывы/вопросы WB через LLM.
+
+        Под флагом FEEDBACK_AUTO_REPLY_ENABLED. На каждом тике вызывает
+        FeedbackResponder.run_once() (poll → генерация → публикация → журнал
+        → DM). Исключения логируются, цикл продолжается.
+        """
+        interval = max(60, getattr(self._config, "feedback_poll_interval_seconds", 900))
+        cap = getattr(self._config, "feedback_max_per_cycle", 10)
+        self._logger.info(
+            "FEEDBACK auto-reply loop started: interval=%ds, cap=%d/cycle (АВТОПОСТИНГ)",
+            interval, cap,
+        )
+        while not self._stop_event.is_set():
+            try:
+                result = await self._feedback_responder.run_once()
+                if result.get("posted") or result.get("failed"):
+                    self._logger.info(
+                        "FEEDBACK cycle: feedbacks=%d questions=%d posted=%d failed=%d",
+                        result["feedbacks"], result["questions"],
+                        result["posted"], result["failed"],
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._logger.exception("FEEDBACK loop iteration failed")
+
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+        self._logger.info("FEEDBACK loop stopped")

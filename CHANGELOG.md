@@ -25,6 +25,17 @@
 - Реализована команда `/insights` (была в меню без обработчика).
 
 ### Added
+- **LLM-автоответы на отзывы и вопросы WB** (Фаза 1): фоновый цикл опрашивает
+  неотвеченные отзывы/вопросы (WB Feedbacks API), генерирует ответ через
+  Ollama Cloud (`deepseek-v4-pro`) и публикует его. Идемпотентность + аудит в
+  таблице `feedback_replies` (миграция m010), DM владельцу о каждом ответе,
+  sanity-гейт против пустых/битых ответов. Под флагом
+  `FEEDBACK_AUTO_REPLY_ENABLED` (по умолчанию OFF). Новые модули `app/llm/`,
+  `app/wb/feedbacks_client.py`, `app/services/feedback_responder.py`.
+- **LLM-советник по кабинету** (Фаза 2): команда `/advice` — read-only разбор
+  продаж/остатков/возвратов/выкупаемости с конкретными советами по продажам.
+  Переиспользует `LLMClient` и `InsightEngine`. Новый
+  `app/services/cabinet_advisor.py`.
 - Тесты денежной формулы (`compute_arbitrage_margin` по ground-truth),
   атомарности вставок, ретеншена и гейта тарифов. Всего 112 тестов.
 - CI: lint (ruff) + type-check (mypy, advisory) + coverage gate.
