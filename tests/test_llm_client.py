@@ -102,3 +102,27 @@ async def test_think_param_forwarded_when_set() -> None:
     client = LLMClient(session, api_key="K", backoff_seconds=0)  # type: ignore[arg-type]
     await client.generate(system="s", user="u", think=False)
     assert session.calls[0]["json"]["think"] is False
+
+
+async def test_generate_retries_on_transport_error() -> None:
+    import aiohttp
+
+    class _BoomSession(_FakeSession):
+        def post(self, url: str, *, json: Any = None, headers: Any = None, timeout: Any = None) -> _FakeResponse:
+            self.calls.append({"url": url, "json": json, "headers": headers})
+            if len(self.calls) == 1:
+                raise aiohttp.ClientError("conn reset")
+            return _ok("recovered")
+
+    session = _BoomSession([])
+    client = LLMClient(session, api_key="K", retries=2, backoff_seconds=0)  # type: ignore[arg-type]
+    assert await client.generate(system="s", user="u") == "recovered"
+    assert len(session.calls) == 2
+
+
+async def test_extract_content_tolerates_malformed() -> None:
+    f = LLMClient._extract_content
+    assert f(123) == ""
+    assert f({}) == ""
+    assert f({"message": "notadict"}) == ""
+    assert f({"message": {"content": None}}) == ""

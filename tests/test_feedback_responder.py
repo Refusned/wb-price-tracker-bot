@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiogram import Bot
@@ -17,7 +17,7 @@ from app.services.feedback_responder import FeedbackResponder
 from app.storage.db import Database
 from app.storage.feedback_reply_repository import FeedbackReplyRepository
 from app.storage.repositories import SubscriberRepository
-from app.wb.feedbacks_client import Feedback, FeedbacksApiError, Question
+from app.wb.feedbacks_client import ANSWER_MAX_LEN, Feedback, FeedbacksApiError, Question
 
 pytestmark = pytest.mark.asyncio
 
@@ -77,6 +77,7 @@ async def _build(
     llm: FakeLLM | None = None,
     signature: str = "",
     max_per_cycle: int = 10,
+    allowed_user_ids: set[int] | None = None,
 ) -> tuple[Database, FakeFeedbacks, FeedbackReplyRepository, FeedbackResponder, AsyncMock]:
     db = Database((tmp_path / "app.db").as_posix())
     await db.connect()
@@ -92,7 +93,8 @@ async def _build(
         subscriber_repository=cast(SubscriberRepository, FakeSubs([123])),
         bot=cast(Bot, bot),
         config=cast(Any, SimpleNamespace(
-            feedback_signature=signature, feedback_max_per_cycle=max_per_cycle)),
+            feedback_signature=signature, feedback_max_per_cycle=max_per_cycle,
+            allowed_user_ids=allowed_user_ids or set())),
     )
     return db, fb_client, repo, responder, bot
 
@@ -197,3 +199,131 @@ async def test_max_per_cycle_caps_volume(tmp_path: Path) -> None:
         assert stats["posted"] == 2
     finally:
         await db.close()
+
+
+async def test_overlong_draft_truncated_signature_kept(tmp_path: Path) -> None:
+    # длинный ответ обрезается ДО подписи: итог ≤ лимита И подпись сохранена
+    db, fb_client, repo, responder, bot = await _build(
+        tmp_path, feedbacks=[_fb()], llm=FakeLLM(reply="а" * 6000),
+        signature="С уважением, Магазин")
+    try:
+        await responder.run_once()
+        published = fb_client.answered_feedbacks[0][1]
+        assert len(published) <= ANSWER_MAX_LEN
+        assert published.endswith("С уважением, Магазин")
+    finally:
+        await db.close()
+
+
+async def test_wrapping_quotes_stripped(tmp_path: Path) -> None:
+    db, fb_client, repo, responder, bot = await _build(
+        tmp_path, feedbacks=[_fb()], llm=FakeLLM(reply="«Спасибо за отзыв»"))
+    try:
+        await responder.run_once()
+        assert fb_client.answered_feedbacks[0][1] == "Спасибо за отзыв"
+    finally:
+        await db.close()
+
+
+async def test_inner_quotes_not_corrupted(tmp_path: Path) -> None:
+    # внутри есть », крайние кавычки НЕ снимаем — текст не должен повредиться
+    db, fb_client, repo, responder, bot = await _build(
+        tmp_path, feedbacks=[_fb()], llm=FakeLLM(reply="«А» и «Б»"))
+    try:
+        await responder.run_once()
+        assert fb_client.answered_feedbacks[0][1] == "«А» и «Б»"
+    finally:
+        await db.close()
+
+
+async def test_too_short_draft_rejected(tmp_path: Path) -> None:
+    db, fb_client, repo, responder, bot = await _build(
+        tmp_path, feedbacks=[_fb()], llm=FakeLLM(reply="X"))
+    try:
+        stats = await responder.run_once()
+        assert fb_client.answered_feedbacks == []
+        assert stats["failed"] == 1
+        assert await repo.is_handled("feedback", "F1") is False
+    finally:
+        await db.close()
+
+
+# ── #1 контент-гейт: ответ с контактами НЕ публикуется ──────────────
+
+async def test_reply_with_url_not_published(tmp_path: Path) -> None:
+    db, fb_client, repo, responder, bot = await _build(
+        tmp_path, feedbacks=[_fb()],
+        llm=FakeLLM(reply="Спасибо! Подробнее на http://shop.example"))
+    try:
+        stats = await responder.run_once()
+        assert fb_client.answered_feedbacks == []  # гейт не пустил ссылку
+        assert stats["failed"] == 1
+        assert await repo.is_handled("feedback", "F1") is False
+    finally:
+        await db.close()
+
+
+async def test_reply_with_phone_not_published(tmp_path: Path) -> None:
+    db, fb_client, repo, responder, bot = await _build(
+        tmp_path, feedbacks=[_fb()],
+        llm=FakeLLM(reply="Звоните: +7 900 123 45 67, поможем"))
+    try:
+        stats = await responder.run_once()
+        assert fb_client.answered_feedbacks == []  # телефон не публикуем
+        assert stats["failed"] == 1
+    finally:
+        await db.close()
+
+
+# ── #4 не перебиваем уже отвеченные ─────────────────────────────────
+
+async def test_already_answered_feedback_skipped(tmp_path: Path) -> None:
+    fb = Feedback(id="F9", text="ок", rating=5, created_date="", nm_id=1,
+                  product_name="X", user_name="", answered=True)
+    db, fb_client, repo, responder, bot = await _build(tmp_path, feedbacks=[fb])
+    try:
+        stats = await responder.run_once()
+        assert fb_client.answered_feedbacks == []  # уже отвечено — не трогаем
+        assert stats["posted"] == 0 and stats["failed"] == 0
+        bot.send_message.assert_not_awaited()
+    finally:
+        await db.close()
+
+
+# ── #5 DM об автоответе — только владельцу (allowed_user_ids) ────────
+
+async def test_owner_dm_goes_to_allowed_users_only(tmp_path: Path) -> None:
+    db, fb_client, repo, responder, bot = await _build(
+        tmp_path, feedbacks=[_fb()], llm=FakeLLM(reply="Спасибо!"),
+        allowed_user_ids={999})
+    try:
+        await responder.run_once()
+        bot.send_message.assert_awaited_once()
+        assert bot.send_message.await_args.kwargs["chat_id"] == 999
+    finally:
+        await db.close()
+
+
+# ── #6 kill-switch: цикл автоответов НЕ стартует при выключенном флаге ─
+
+async def test_feedback_loop_gated_by_flag() -> None:
+    from app.scheduler import WbUpdateScheduler
+
+    def _mk(flag: bool, responder: Any) -> WbUpdateScheduler:
+        return WbUpdateScheduler(
+            config=cast(Any, SimpleNamespace(feedback_auto_reply_enabled=flag)),
+            wb_client=cast(Any, MagicMock()),
+            bot=cast(Any, AsyncMock()),
+            item_repository=cast(Any, MagicMock()),
+            meta_repository=cast(Any, MagicMock()),
+            settings_repository=cast(Any, MagicMock()),
+            subscriber_repository=cast(Any, MagicMock()),
+            price_stats_repository=cast(Any, MagicMock()),
+            price_history_repository=cast(Any, MagicMock()),
+            tracked_article_repository=cast(Any, MagicMock()),
+            feedback_responder=responder,
+        )
+
+    assert _mk(True, object())._feedback_loop_enabled() is True   # respondер + флаг
+    assert _mk(False, object())._feedback_loop_enabled() is False  # флаг OFF
+    assert _mk(True, None)._feedback_loop_enabled() is False       # нет респондера

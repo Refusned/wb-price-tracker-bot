@@ -143,9 +143,7 @@ class WbUpdateScheduler:
             self._arbitrage_task = self._supervise(asyncio.create_task(
                 self._run_arbitrage_loop(), name="arbitrage-scanner",
             ))
-        if self._feedback_responder is not None and getattr(
-            self._config, "feedback_auto_reply_enabled", False
-        ):
+        if self._feedback_loop_enabled():
             self._feedback_task = self._supervise(asyncio.create_task(
                 self._run_feedback_loop(), name="feedback-responder",
             ))
@@ -723,6 +721,15 @@ class WbUpdateScheduler:
         self._logger.info("ARBITRAGE loop stopped")
 
     # ---------- Feedback auto-reply loop (Фаза 1) ----------
+
+    def _feedback_loop_enabled(self) -> bool:
+        """Авто-ответы запускаются ТОЛЬКО при наличии респондера И флаге
+        FEEDBACK_AUTO_REPLY_ENABLED=true. Вынесено отдельно для тестируемости
+        kill-switch'а (регрессия, запускающая цикл при выключенном флаге,
+        молча начала бы автопостинг)."""
+        return self._feedback_responder is not None and bool(
+            getattr(self._config, "feedback_auto_reply_enabled", False)
+        )
 
     async def _run_feedback_loop(self) -> None:
         """Периодический автоответ на отзывы/вопросы WB через LLM.

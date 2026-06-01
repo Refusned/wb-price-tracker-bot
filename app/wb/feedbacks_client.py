@@ -51,6 +51,7 @@ class Feedback:
     user_name: str
     pros: str = ""
     cons: str = ""
+    answered: bool = False   # уже есть ответ (WB поле answer != null)
 
 
 @dataclass(slots=True)
@@ -60,6 +61,7 @@ class Question:
     created_date: str
     nm_id: int
     product_name: str
+    answered: bool = False   # уже есть ответ (WB поле answer != null)
 
 
 class WBFeedbacksClient:
@@ -179,6 +181,7 @@ class WBFeedbacksClient:
             user_name=str(f.get("userName") or ""),
             pros=str(f.get("pros") or ""),
             cons=str(f.get("cons") or ""),
+            answered=bool(f.get("answer")),
         )
 
     @staticmethod
@@ -190,4 +193,5 @@ class WBFeedbacksClient:
             created_date=str(q.get("createdDate") or ""),
             nm_id=int(pd.get("nmId") or 0),
             product_name=str(pd.get("productName") or ""),
+            answered=bool(q.get("answer")),
         )

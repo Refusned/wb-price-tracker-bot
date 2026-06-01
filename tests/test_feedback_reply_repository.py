@@ -52,6 +52,33 @@ async def test_failed_not_handled_then_retry_to_posted(tmp_path: Path) -> None:
         await db.close()
 
 
+async def test_pending_reserve_blocks_rehandling(tmp_path: Path) -> None:
+    # резерв 'pending' (пишется ДО публикации) блокирует повторную обработку,
+    # чтобы публичный ответ не ушёл дважды.
+    db, repo = await _repo(tmp_path)
+    try:
+        await repo.record(kind="feedback", feedback_id="F1", original_text="x",
+                          answer_text="y", status="pending")
+        assert await repo.is_handled("feedback", "F1") is True
+    finally:
+        await db.close()
+
+
+async def test_attempts_cap_stops_retry(tmp_path: Path) -> None:
+    from app.storage.feedback_reply_repository import MAX_ATTEMPTS
+    db, repo = await _repo(tmp_path)
+    try:
+        for _ in range(MAX_ATTEMPTS - 1):
+            await repo.record(kind="feedback", feedback_id="F1", original_text="x",
+                              answer_text="", status="failed")
+            assert await repo.is_handled("feedback", "F1") is False  # ещё ретраим
+        await repo.record(kind="feedback", feedback_id="F1", original_text="x",
+                          answer_text="", status="failed")
+        assert await repo.is_handled("feedback", "F1") is True  # лимит исчерпан
+    finally:
+        await db.close()
+
+
 async def test_validation(tmp_path: Path) -> None:
     db, repo = await _repo(tmp_path)
     try:
