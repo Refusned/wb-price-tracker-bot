@@ -32,6 +32,10 @@
   sanity-гейт против пустых/битых ответов. Под флагом
   `FEEDBACK_AUTO_REPLY_ENABLED` (по умолчанию OFF). Новые модули `app/llm/`,
   `app/wb/feedbacks_client.py`, `app/services/feedback_responder.py`.
+- **LLM-советник по кабинету** (Фаза 2): команда `/advice` — read-only разбор
+  продаж/остатков/возвратов/выкупаемости с конкретными советами по продажам.
+  Переиспользует `LLMClient` и `InsightEngine`. Новый
+  `app/services/cabinet_advisor.py`.
 - Тесты денежной формулы (`compute_arbitrage_margin` по ground-truth),
   атомарности вставок, ретеншена и гейта тарифов. Всего 112 тестов.
 - CI: lint (ruff) + type-check (mypy, advisory) + coverage gate.

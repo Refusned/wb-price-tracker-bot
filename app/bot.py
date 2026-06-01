@@ -10,6 +10,7 @@ from app.config import AppConfig
 from app.middlewares import AccessMiddleware
 from app.handlers import admin, business, common, decisions, main_menu, margin, missed_deals, purchase_prompts, spp_log, top10
 from app.scheduler import WbUpdateScheduler
+from app.services.cabinet_advisor import CabinetAdvisor
 from app.services.insight_engine import InsightEngine
 from app.services.personal_spp_auto_collector import PersonalSppAutoCollector
 from app.storage.business_repository import BusinessRepository
@@ -44,6 +45,7 @@ def build_dispatcher(
     arb_repo: ArbitrageRepository | None = None,
     arb_scanner: ArbitrageScanner | None = None,
     auto_observer: AutoObserver | None = None,
+    cabinet_advisor: CabinetAdvisor | None = None,
 ) -> Dispatcher:
     dp = Dispatcher()
 
@@ -145,6 +147,7 @@ def build_dispatcher(
                 updater=updater,
                 decision_snapshot_repo=decision_snapshot_repo,
                 auto_observer=auto_observer,
+                cabinet_advisor=cabinet_advisor,
             )
         )
 

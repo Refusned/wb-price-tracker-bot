@@ -41,6 +41,7 @@ from app.wb.seller_client import SellerClient
 from app.wb.feedbacks_client import WBFeedbacksClient
 from app.llm import LLMClient
 from app.services.feedback_responder import FeedbackResponder
+from app.services.cabinet_advisor import CabinetAdvisor
 from app.storage.feedback_reply_repository import FeedbackReplyRepository
 
 
@@ -161,6 +162,8 @@ async def run() -> None:
         # с scope «Вопросы и отзывы». По умолчанию всё выключено (килл-свитч):
         # сам факт деплоя ничего не публикует.
         feedback_responder: FeedbackResponder | None = None
+        cabinet_advisor: CabinetAdvisor | None = None
+        llm_client: LLMClient | None = None
         if config.llm_api_key:
             llm_client = LLMClient(
                 session=http_session,
@@ -192,6 +195,13 @@ async def run() -> None:
                 "с scope «Вопросы и отзывы» (WB_FEEDBACKS_API_KEY/WB_SELLER_API_KEY) "
                 "— автоответы ВЫКЛЮЧЕНЫ",
             )
+
+        # Фаза 2: советник по кабинету (/advice). Нужны LLM + Seller-данные.
+        if insight_engine is not None and llm_client is not None:
+            cabinet_advisor = CabinetAdvisor(
+                insight_engine=insight_engine, llm_client=llm_client,
+            )
+            logger.info("Cabinet advisor enabled (/advice)")
 
         updater = WbUpdateScheduler(
             config=config,
@@ -233,6 +243,7 @@ async def run() -> None:
             arb_repo=arb_repo,
             arb_scanner=arb_scanner,
             auto_observer=arb_auto_observer,
+            cabinet_advisor=cabinet_advisor,
         )
 
         await updater.start()
