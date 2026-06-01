@@ -38,6 +38,10 @@ from app.storage.personal_spp_repository import PersonalSppRepository
 from app.storage.stock_arrival_repository import StockArrivalRepository
 from app.wb import WildberriesClient
 from app.wb.seller_client import SellerClient
+from app.wb.feedbacks_client import WBFeedbacksClient
+from app.llm import LLMClient
+from app.services.feedback_responder import FeedbackResponder
+from app.storage.feedback_reply_repository import FeedbackReplyRepository
 
 
 async def run() -> None:
@@ -67,6 +71,7 @@ async def run() -> None:
     stock_arrival_repo = StockArrivalRepository(database)
     arb_repo = ArbitrageRepository(database)
     arb_tariffs_repo = TariffsRepository(database)
+    feedback_reply_repo = FeedbackReplyRepository(database)
 
     await settings_repository.ensure_defaults(config.min_price_rub)
     await settings_repository.ensure_margin_defaults(
@@ -150,6 +155,44 @@ async def run() -> None:
         elif config.arbitrage_enabled:
             logger.warning("ARBITRAGE_ENABLED=true but WB_SELLER_API_KEY is empty — scanner disabled")
 
+        # ── Фаза 1: LLM-автоответы на отзывы/вопросы WB ───────────────
+        # LLM-клиент поднимается при наличии OLLAMA_API_KEY. Автоответы
+        # включаются ТОЛЬКО если FEEDBACK_AUTO_REPLY_ENABLED=true И есть ключ
+        # с scope «Вопросы и отзывы». По умолчанию всё выключено (килл-свитч):
+        # сам факт деплоя ничего не публикует.
+        feedback_responder: FeedbackResponder | None = None
+        if config.llm_api_key:
+            llm_client = LLMClient(
+                session=http_session,
+                api_key=config.llm_api_key,
+                base_url=config.llm_base_url,
+                model=config.llm_model,
+                timeout_seconds=config.llm_timeout_seconds,
+            )
+            logger.info("LLM enabled: model=%s base=%s", config.llm_model, config.llm_base_url)
+            if config.feedback_auto_reply_enabled and config.wb_feedbacks_api_key:
+                feedbacks_client = WBFeedbacksClient(
+                    session=http_session, api_key=config.wb_feedbacks_api_key,
+                )
+                feedback_responder = FeedbackResponder(
+                    feedbacks_client=feedbacks_client,
+                    llm_client=llm_client,
+                    reply_repo=feedback_reply_repo,
+                    subscriber_repository=subscriber_repository,
+                    bot=bot,
+                    config=config,
+                )
+                logger.warning(
+                    "Feedback AUTO-REPLY ВКЛЮЧЁН — бот будет САМ публиковать "
+                    "ответы покупателям без подтверждения (модель %s)", config.llm_model,
+                )
+        if config.feedback_auto_reply_enabled and feedback_responder is None:
+            logger.warning(
+                "FEEDBACK_AUTO_REPLY_ENABLED=true, но нет OLLAMA_API_KEY или ключа "
+                "с scope «Вопросы и отзывы» (WB_FEEDBACKS_API_KEY/WB_SELLER_API_KEY) "
+                "— автоответы ВЫКЛЮЧЕНЫ",
+            )
+
         updater = WbUpdateScheduler(
             config=config,
             wb_client=wb_client,
@@ -169,6 +212,7 @@ async def run() -> None:
             insight_engine=insight_engine,
             arbitrage_scanner=arb_scanner,
             tariffs_cache=arb_tariffs_cache,
+            feedback_responder=feedback_responder,
         )
 
         dispatcher = build_dispatcher(

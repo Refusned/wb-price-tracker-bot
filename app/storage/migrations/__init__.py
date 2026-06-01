@@ -23,6 +23,7 @@ from . import (
     m007_decision_purchase_link,
     m008_arbitrage,
     m009_arb_keywords_labels,
+    m010_feedback_replies,
 )
 
 MIGRATIONS = [
@@ -35,4 +36,5 @@ MIGRATIONS = [
     m007_decision_purchase_link,
     m008_arbitrage,
     m009_arb_keywords_labels,
+    m010_feedback_replies,
 ]

@@ -171,6 +171,27 @@ class AppConfig:
     # Ретеншен арбитражных таблиц (дни). Без него БД растёт бесконечно.
     arb_candidate_retention_days: int
     arb_observation_retention_days: int
+    # ── LLM (Ollama Cloud) — общая основа для Фазы 1 (автоответы) и
+    #    Фазы 2 (советник по кабинету) ──────────────────────────────
+    # LLM-клиент создаётся, только если задан llm_api_key (как seller_client).
+    # base_url по умолчанию — Ollama Cloud; для локального Ollama поставь
+    # LLM_BASE_URL=http://localhost:11434.
+    llm_base_url: str
+    llm_api_key: str
+    llm_model: str
+    llm_timeout_seconds: float
+    # ── Автоответы на отзывы/вопросы WB (Фаза 1) ───────────────────
+    # ВЫКЛ по умолчанию: даже при заданном ключе ничего не постится,
+    # пока флаг не включён явно. Это килл-свитч.
+    feedback_auto_reply_enabled: bool
+    feedback_poll_interval_seconds: int
+    # Токен с scope «Вопросы и отзывы». Если пуст — берём wb_seller_api_key.
+    wb_feedbacks_api_key: str
+    # Необязательная подпись в конце ответа (напр. «С уважением, магазин N»).
+    feedback_signature: str
+    # Сколько отзывов+вопросов обрабатывать за один цикл. Троттлит «потоп»
+    # на первом запуске (бэклог исторических неотвеченных отвечается порциями).
+    feedback_max_per_cycle: int
 
     def is_user_allowed(self, user_id: int | None) -> bool:
         # Deny-by-default: пустой ALLOWED_USER_IDS = доступ закрыт ВСЕМ.
@@ -275,6 +296,18 @@ def load_config() -> AppConfig:
         shadow_mode=_to_bool("SHADOW_MODE", True),
         arb_candidate_retention_days=_to_int("ARB_CANDIDATE_RETENTION_DAYS", 90),
         arb_observation_retention_days=_to_int("ARB_OBSERVATION_RETENTION_DAYS", 180),
+        llm_base_url=os.getenv("LLM_BASE_URL", "https://ollama.com").strip(),
+        llm_api_key=os.getenv("OLLAMA_API_KEY", "").strip(),
+        llm_model=os.getenv("LLM_MODEL", "deepseek-v4-pro").strip(),
+        llm_timeout_seconds=_to_float("LLM_TIMEOUT_SECONDS", 60.0),
+        feedback_auto_reply_enabled=_to_bool("FEEDBACK_AUTO_REPLY_ENABLED", False),
+        feedback_poll_interval_seconds=_to_int("FEEDBACK_POLL_INTERVAL_SECONDS", 900),
+        wb_feedbacks_api_key=(
+            os.getenv("WB_FEEDBACKS_API_KEY", "").strip()
+            or os.getenv("WB_SELLER_API_KEY", "").strip()
+        ),
+        feedback_signature=os.getenv("FEEDBACK_SIGNATURE", "").strip(),
+        feedback_max_per_cycle=_to_int("FEEDBACK_MAX_PER_CYCLE", 10),
     )
 
     # Startup-проверка безопасности: вне shadow-режима мутирующие inline-кнопки
