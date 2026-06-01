@@ -41,6 +41,7 @@ class _FakeSession:
     def __init__(self) -> None:
         self.get_q: list[_Resp] = []
         self.patch_q: list[_Resp] = []
+        self.post_q: list[_Resp] = []
         self.calls: list[dict[str, Any]] = []
 
     def get(self, url: str, *, params: Any = None, headers: Any = None, timeout: Any = None) -> _Resp:
@@ -50,6 +51,10 @@ class _FakeSession:
     def patch(self, url: str, *, json: Any = None, headers: Any = None, timeout: Any = None) -> _Resp:
         self.calls.append({"method": "PATCH", "url": url, "json": json})
         return self.patch_q.pop(0)
+
+    def post(self, url: str, *, json: Any = None, headers: Any = None, timeout: Any = None) -> _Resp:
+        self.calls.append({"method": "POST", "url": url, "json": json})
+        return self.post_q.pop(0)
 
 
 def _client(session: _FakeSession) -> WBFeedbacksClient:
@@ -95,14 +100,14 @@ async def test_get_unanswered_questions_parses() -> None:
     assert session.calls[0]["url"].endswith("/api/v1/questions")
 
 
-async def test_answer_feedback_sends_patch_with_id_and_text() -> None:
+async def test_answer_feedback_posts_to_answer_endpoint() -> None:
     session = _FakeSession()
-    session.patch_q.append(_Resp(204))  # WB: отзыв -> 204
+    session.post_q.append(_Resp(204))  # WB: POST /feedbacks/answer -> 204
     await _client(session).answer_feedback("F1", "Спасибо за отзыв!")
 
     call = session.calls[0]
-    assert call["method"] == "PATCH"
-    assert call["url"].endswith("/api/v1/feedbacks")
+    assert call["method"] == "POST"
+    assert call["url"].endswith("/api/v1/feedbacks/answer")
     assert call["json"] == {"id": "F1", "text": "Спасибо за отзыв!"}
 
 
@@ -130,6 +135,6 @@ async def test_get_raises_on_non_200() -> None:
 
 async def test_answer_raises_on_unexpected_status() -> None:
     session = _FakeSession()
-    session.patch_q.append(_Resp(403, text="forbidden"))
+    session.post_q.append(_Resp(403, text="forbidden"))
     with pytest.raises(FeedbacksApiError):
         await _client(session).answer_feedback("F1", "текст")

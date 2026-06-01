@@ -12,7 +12,8 @@ FeedbackResponder под флагом FEEDBACK_AUTO_REPLY_ENABLED. Для про
 
 Формы подтверждены по офиц. доке WB (user-communication):
     GET   /api/v1/feedbacks?isAnswered=false&take&skip&order  -> data.feedbacks[]
-    PATCH /api/v1/feedbacks   {"id","text"}                    -> 204
+    POST  /api/v1/feedbacks/answer  {"id","text"}              -> 204
+        (NB: PATCH /api/v1/feedbacks отвечает 405 — там только GET/HEAD)
     GET   /api/v1/questions?isAnswered=false&take&skip&order   -> data.questions[]
     PATCH /api/v1/questions   {"id","answer":{"text"},"state":"wbRu"}
 """
@@ -116,8 +117,11 @@ class WBFeedbacksClient:
     # ---------- writes (МУТИРУЮЩИЕ — публикуют ответ покупателю) ----------
 
     async def answer_feedback(self, feedback_id: str, text: str) -> None:
-        """Опубликовать ответ на отзыв. PATCH /api/v1/feedbacks {id,text} -> 204."""
-        await self._patch("/api/v1/feedbacks", {"id": feedback_id, "text": text})
+        """Опубликовать ответ на отзыв. POST /api/v1/feedbacks/answer {id,text}.
+
+        Именно POST на /feedbacks/answer (НЕ PATCH /feedbacks — там 405).
+        """
+        await self._post("/api/v1/feedbacks/answer", {"id": feedback_id, "text": text})
 
     async def answer_question(self, question_id: str, text: str) -> None:
         """Опубликовать ответ на вопрос. state=wbRu публикует на wb.ru."""
@@ -142,6 +146,19 @@ class WBFeedbacksClient:
         except aiohttp.ClientError as exc:
             raise FeedbacksApiError(f"GET {path} failed: {exc}") from exc
 
+    async def _post(self, path: str, body: dict[str, Any]) -> None:
+        await self._throttle()
+        url = f"{self._base}{path}"
+        try:
+            async with self._session.post(
+                url, json=body, headers=self._headers, timeout=self._timeout,
+            ) as resp:
+                if resp.status not in (200, 204):
+                    txt = (await resp.text())[:300]
+                    raise FeedbacksApiError(f"POST {path} -> HTTP {resp.status}: {txt}")
+        except aiohttp.ClientError as exc:
+            raise FeedbacksApiError(f"POST {path} failed: {exc}") from exc
+
     async def _patch(self, path: str, body: dict[str, Any]) -> None:
         await self._throttle()
         url = f"{self._base}{path}"
@@ -149,7 +166,7 @@ class WBFeedbacksClient:
             async with self._session.patch(
                 url, json=body, headers=self._headers, timeout=self._timeout,
             ) as resp:
-                # WB отвечает 204 (отзыв) или 200 (вопрос). Всё прочее — ошибка.
+                # WB отвечает 200/204. Всё прочее — ошибка.
                 if resp.status not in (200, 204):
                     txt = (await resp.text())[:300]
                     raise FeedbacksApiError(f"PATCH {path} -> HTTP {resp.status}: {txt}")
