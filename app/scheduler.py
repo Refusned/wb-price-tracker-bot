@@ -38,7 +38,7 @@ from app.utils.business_formatting import (
 )
 from app.utils.formatting import build_price_drop_alert_message
 from app.wb.client import WildberriesClient
-from app.wb.seller_client import SellerClient
+from app.wb.seller_client import SellerApiError, SellerClient
 
 _HEALTH_ALERT_THRESHOLD = 3
 
@@ -444,12 +444,30 @@ class WbUpdateScheduler:
                     sales = await self._seller_client.get_sales(date_from, flag=0)
                 new_sale_srids = await self._business_repository.upsert_sales(sales, seen_at)
 
-                # FBO (WB-склады)
-                fbo_stocks = await self._seller_client.get_stocks(date_from=date_from)
+                # FBO (WB-склады): полный снимок (dateFrom=epoch внутри клиента).
+                # Источники изолированы: сбой остатков не должен ронять весь
+                # seller-цикл (orders/sales/finance/detector ниже).
+                fbo_stocks: list = []
+                fbo_ok = False
+                try:
+                    fbo_stocks = await self._seller_client.get_stocks(date_from=None)
+                    fbo_ok = True
+                except SellerApiError as exc:
+                    self._logger.warning("FBO stocks fetch failed (skip purge): %s", exc)
+
                 # FBS (собственные склады селлера)
-                fbs_stocks = await self._seller_client.get_all_fbs_stocks()
+                fbs_stocks: list = []
+                fbs_ok = False
+                try:
+                    fbs_stocks, fbs_ok = await self._seller_client.get_all_fbs_stocks()
+                except SellerApiError as exc:
+                    self._logger.warning("FBS stocks fetch failed (skip purge): %s", exc)
+
                 all_stocks = list(fbo_stocks) + list(fbs_stocks)
-                await self._business_repository.upsert_stocks(all_stocks, seen_at)
+                # Пуржим устаревшие строки только при ПОЛНОМ снимке ОБОИХ
+                # источников — иначе временный сбой снёс бы валидные остатки.
+                purge_ok = fbo_ok and fbs_ok
+                await self._business_repository.upsert_stocks(all_stocks, seen_at, purge_stale=purge_ok)
                 stocks = all_stocks  # для лога ниже
 
                 # Day 15: auto-collect personal SPP proxy from recent sales.
@@ -494,6 +512,17 @@ class WbUpdateScheduler:
                 await self._meta_repository.set_value("last_seller_orders_count", str(len(orders)))
                 await self._meta_repository.set_value("last_seller_sales_count", str(len(sales)))
                 await self._meta_repository.set_value("last_seller_stocks_count", str(len(stocks)))
+                # Счётчики обновляем только при успехе источника — иначе при
+                # сбое FBO футер /stock показал бы вводящий в заблуждение «FBO 0»
+                # вместо последнего известного значения.
+                if fbo_ok:
+                    await self._meta_repository.set_value("last_seller_stocks_fbo", str(len(fbo_stocks)))
+                if fbs_ok:
+                    await self._meta_repository.set_value("last_seller_stocks_fbs", str(len(fbs_stocks)))
+                if purge_ok:
+                    # Метку «последней ПОЛНОЙ синхронизации» двигаем только при
+                    # полном снимке; при частичном сбое она застывает (видно в /stock).
+                    await self._meta_repository.set_value("last_stocks_sync_at", seen_at)
 
                 self._logger.info(
                     "Seller update: orders=%s (new=%s), sales=%s (new=%s), stocks=%s",

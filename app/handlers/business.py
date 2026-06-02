@@ -86,7 +86,20 @@ def get_router(
             return
         await remember_subscriber(message, subscriber_repository)
         stocks = await business_repository.get_stock_summary()
-        await message.answer(build_stock_message(stocks))
+        meta = updater._meta_repository
+        last_sync_at = await meta.get_value("last_stocks_sync_at")
+        fbo_raw = await meta.get_value("last_seller_stocks_fbo")
+        fbs_raw = await meta.get_value("last_seller_stocks_fbs")
+        fbo_count = int(fbo_raw) if fbo_raw and fbo_raw.isdigit() else None
+        fbs_count = int(fbs_raw) if fbs_raw and fbs_raw.isdigit() else None
+        await message.answer(
+            build_stock_message(
+                stocks,
+                last_sync_at=last_sync_at,
+                fbo_count=fbo_count,
+                fbs_count=fbs_count,
+            )
+        )
 
     @router.message(Command("stock_fbs"))
     async def stock_fbs_handler(message: Message) -> None:
@@ -95,13 +108,16 @@ def get_router(
             return
         await remember_subscriber(message, subscriber_repository)
         await message.answer("🔎 Запрашиваю FBS остатки через marketplace-api...")
-        fbs = await updater._seller_client.get_all_fbs_stocks()
+        fbs, fbs_ok = await updater._seller_client.get_all_fbs_stocks()
         if not fbs:
-            await message.answer(
-                "❌ FBS пуст или API не ответил.\n"
-                "Проверь: 1) есть ли у тебя свой склад в WB кабинете (раздел 'Маркетплейс')\n"
-                "2) есть ли товары с вазначенными остатками на FBS"
-            )
+            if not fbs_ok:
+                await message.answer("❌ FBS API не ответил (сетевой сбой). Попробуй позже.")
+            else:
+                await message.answer(
+                    "❌ FBS пуст.\n"
+                    "Проверь: 1) есть ли у тебя свой склад в WB кабинете (раздел 'Маркетплейс')\n"
+                    "2) есть ли товары с вазначенными остатками на FBS"
+                )
             return
         lines = [f"📦 FBS остатки ({len(fbs)} записей)", ""]
         total = 0
@@ -111,7 +127,10 @@ def get_router(
         lines.append("")
         lines.append(f"Итого: {sum(s.quantity for s in fbs)} шт на {len({s.warehouse_name for s in fbs})} FBS складах")
         from datetime import datetime, timezone
-        await business_repository.upsert_stocks(fbs, datetime.now(timezone.utc).isoformat())
+        # Ручной FBS-only снимок не должен пуржить FBO-строки (purge_stale=False).
+        await business_repository.upsert_stocks(
+            fbs, datetime.now(timezone.utc).isoformat(), purge_stale=False
+        )
         lines.append("\n✅ Записано в БД. /stock покажет вместе с FBO.")
         await message.answer("\n".join(lines))
 

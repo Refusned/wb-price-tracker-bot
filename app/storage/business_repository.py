@@ -270,7 +270,16 @@ class BusinessRepository:
 
     # ---------- Stocks ----------
 
-    async def upsert_stocks(self, stocks: Sequence[StockEntry], updated_at: str) -> None:
+    async def upsert_stocks(
+        self, stocks: Sequence[StockEntry], updated_at: str, *, purge_stale: bool = True
+    ) -> None:
+        """Апсерт остатков по (nm_id, warehouse_name).
+
+        purge_stale=True (полный снимок обоих источников) — удаляем строки
+        старше updated_at (товар ушёл со склада). purge_stale=False (частичный
+        снимок: один из источников FBO/FBS не ответил, или это ручной /stock_fbs)
+        — только апсерт, без удаления: завышенный остаток безопаснее удалённого.
+        """
         if not stocks:
             return
 
@@ -301,9 +310,9 @@ class BusinessRepository:
                 payload,
             )
             # Purge records not in this snapshot — товар ушёл со склада.
-            # Safety: only если snapshot содержит хотя бы 5 записей
-            # (rate-limit/частичный fetch → не 0 или 1-2 случайных)
-            if len(stocks) >= 5:
+            # Только при полном снимке (purge_stale) и safety-порогом >=5 записей
+            # (rate-limit/частичный fetch → не 0 или 1-2 случайных).
+            if purge_stale and len(stocks) >= 5:
                 await conn.execute(
                     "DELETE FROM own_stocks WHERE updated_at < ?",
                     (updated_at,),

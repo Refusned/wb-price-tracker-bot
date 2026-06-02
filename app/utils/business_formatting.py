@@ -156,7 +156,13 @@ def build_period_metrics_message(label: str, metrics) -> str:
     return "\n".join(lines)
 
 
-def build_stock_message(stocks: list[dict]) -> str:
+def build_stock_message(
+    stocks: list[dict],
+    *,
+    last_sync_at: str | None = None,
+    fbo_count: int | None = None,
+    fbs_count: int | None = None,
+) -> str:
     if not stocks:
         return "📦 Остатков нет. Жду следующий скан Seller API (обновляется каждые 30 мин)."
 
@@ -181,7 +187,21 @@ def build_stock_message(stocks: list[dict]) -> str:
 
     lines.insert(2, f"Всего: {total_all} шт | В пути: {total_in_way} шт")
     lines.insert(3, "")
-    return "\n".join(lines).rstrip()
+    text = "\n".join(lines).rstrip()
+
+    # Футер диагностики свежести (если planner передал метаданные синхронизации).
+    if last_sync_at is not None or fbo_count is not None or fbs_count is not None:
+        src: list[str] = []
+        if fbo_count is not None:
+            src.append(f"FBO {fbo_count}")
+        if fbs_count is not None:
+            src.append(f"FBS {fbs_count}")
+        src.append(f"артикулов {len(stocks)}")
+        text += (
+            f"\n\n🔄 Синхронизация: {format_iso_datetime(last_sync_at)}"
+            f"\nИсточники: {' · '.join(src)}"
+        )
+    return text
 
 
 def build_reorder_message(data: dict) -> str:
