@@ -192,6 +192,12 @@ class AppConfig:
     # Сколько отзывов+вопросов обрабатывать за один цикл. Троттлит «потоп»
     # на первом запуске (бэклог исторических неотвеченных отвечается порциями).
     feedback_max_per_cycle: int
+    # ── Интерактивный LLM-агент по кабинету (Фаза 3) ───────────────
+    # Включается при наличии LLM + Seller-данных; флаг — доп. килл-свитч.
+    agent_chat_enabled: bool
+    agent_think: bool          # think в tool-loop (probe подтвердил: False работает)
+    agent_max_iterations: int  # лимит обращений к инструментам за один ход
+    agent_history_limit: int   # сколько последних ходов держать в контексте
 
     def is_user_allowed(self, user_id: int | None) -> bool:
         # Deny-by-default: пустой ALLOWED_USER_IDS = доступ закрыт ВСЕМ.
@@ -308,6 +314,10 @@ def load_config() -> AppConfig:
         ),
         feedback_signature=os.getenv("FEEDBACK_SIGNATURE", "").strip(),
         feedback_max_per_cycle=_to_int("FEEDBACK_MAX_PER_CYCLE", 10),
+        agent_chat_enabled=_to_bool("AGENT_CHAT_ENABLED", True),
+        agent_think=_to_bool("AGENT_THINK", False),
+        agent_max_iterations=_to_int("AGENT_MAX_ITERATIONS", 6),
+        agent_history_limit=_to_int("AGENT_HISTORY_LIMIT", 16),
     )
 
     # Startup-проверка безопасности: вне shadow-режима мутирующие inline-кнопки

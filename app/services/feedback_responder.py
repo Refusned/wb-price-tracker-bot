@@ -18,29 +18,22 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Awaitable, Callable
 
 from aiogram import Bot
 
 from app.config import AppConfig
 from app.llm.client import LLMClient, LLMError
+from app.services.feedback_posting import finalize_answer, post_reply_idempotent
 from app.storage.feedback_reply_repository import FeedbackReplyRepository
 from app.storage.repositories import SubscriberRepository
 from app.wb.feedbacks_client import (
-    ANSWER_MAX_LEN,
-    ANSWER_MIN_LEN,
     Feedback,
     FeedbacksApiError,
     Question,
     WBFeedbacksClient,
 )
 
-
-# Контент-гейт: ответ покупателю НЕ должен содержать ссылок/почты/телефонов.
-_URL_RE = re.compile(r"https?://|\bwww\.", re.IGNORECASE)
-_EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
-_PHONE_RE = re.compile(r"(?:\+?\d[\s\-()]*){10,}")  # 10+ цифр подряд = телефон
 
 _SYSTEM_PROMPT = (
     "Ты — представитель службы заботы о покупателях интернет-магазина на "
@@ -196,65 +189,24 @@ class FeedbackResponder:
                                nm_id, product_name, rating, "sanity/policy-reject")
             return False
 
-        # 3) РЕЗЕРВ перед публикацией (status=pending). Пишем БЕЗ глушения: если
-        #    резерв не записался — НЕ публикуем (иначе теряем гарантию от дубля).
-        try:
-            await self._repo.record(
-                kind=kind, feedback_id=item_id, original_text=original_text,
-                answer_text=answer, status="pending",
-                nm_id=nm_id, product_name=product_name, rating=rating,
-            )
-        except Exception as exc:
-            self._logger.warning("reserve failed for %s %s: %s — НЕ публикую", kind, item_id, exc)
+        # 3-5) идемпотентная публикация (резерв pending → publish → posted) —
+        #      общий хелпер feedback_posting (MS-7: одна логика на автопостер и
+        #      ручное подтверждение из диалога-агента).
+        ok, status = await post_reply_idempotent(
+            self._repo, kind=kind, feedback_id=item_id, original_text=original_text,
+            answer=answer, publish=publish,
+            nm_id=nm_id, product_name=product_name, rating=rating,
+        )
+        if not ok:
+            self._logger.warning("publish pipeline '%s' for %s %s", status, kind, item_id)
             return False
-
-        # 4) публикация в WB (МУТАЦИЯ — публичный необратимый ответ)
-        try:
-            await publish(answer)
-        except FeedbacksApiError as exc:
-            self._logger.warning("WB publish failed for %s %s: %s", kind, item_id, exc)
-            # откат резерва → failed (ретрай разрешён до MAX_ATTEMPTS); попытку
-            # уже посчитал резерв, поэтому increment=False.
-            await self._record(kind, item_id, original_text, answer, "failed",
-                               nm_id, product_name, rating, str(exc)[:300], increment=False)
-            return False
-
-        # 5) подтверждаем posted. Если эта запись упадёт — pending уже не даст
-        #    опубликовать второй раз (под-ответ безопаснее дубля). increment=False.
-        await self._record(kind, item_id, original_text, answer, "posted",
-                           nm_id, product_name, rating, None, increment=False)
         await self._notify_owner(kind, rating, product_name, original_text, answer)
         self._logger.info("Auto-replied to %s %s (nm=%s)", kind, item_id, nm_id)
         return True
 
     def _finalize(self, draft: str) -> str | None:
-        text = (draft or "").strip()
-        # Снять обрамляющие кавычки ТОЛЬКО если весь ответ — однозначная пара
-        # (гильеметы/типографские) и внутри нет той же кавычки. Иначе ответ
-        # вида «А» и «Б» терял бы крайние символы.
-        pairs = {"«": "»", "“": "”"}
-        if (
-            len(text) >= 2
-            and text[0] in pairs
-            and text[-1] == pairs[text[0]]
-            and pairs[text[0]] not in text[1:-1]
-        ):
-            text = text[1:-1].strip()
-        # Минимальную длину проверяем по самому ответу (до подписи).
-        if len(text) < ANSWER_MIN_LEN:
-            return None
-        # Контент-гейт: не публикуем ответ со ссылкой/почтой/телефоном. LLM-вывод
-        # уходит покупателю необратимо; промпт это запрещает, но ловим и здесь —
-        # в т.ч. на случай prompt-injection из текста отзыва.
-        if _URL_RE.search(text) or _EMAIL_RE.search(text) or _PHONE_RE.search(text):
-            return None
-        # Обрезаем ответ ДО подписи, чтобы подпись не срезалась и итог уложился
-        # в лимит WB (ANSWER_MAX_LEN). Подпись — доверенная (владельца).
-        sig = f"\n\n{self._signature}" if self._signature else ""
-        budget = ANSWER_MAX_LEN - len(sig)
-        if len(text) > budget:
-            text = text[:budget].rstrip()
-        return f"{text}{sig}"
+        # Делегируем общему хелперу (MS-7: единственный источник контент-гейта).
+        return finalize_answer(draft, self._signature)
 
     async def _record(
         self,

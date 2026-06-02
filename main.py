@@ -42,7 +42,10 @@ from app.wb.feedbacks_client import WBFeedbacksClient
 from app.llm import LLMClient
 from app.services.feedback_responder import FeedbackResponder
 from app.services.cabinet_advisor import CabinetAdvisor
+from app.services.agent_tools import AgentToolset
+from app.services.cabinet_agent import CabinetAgent
 from app.storage.feedback_reply_repository import FeedbackReplyRepository
+from app.storage.dialog_repository import DialogRepository
 
 
 async def run() -> None:
@@ -161,8 +164,18 @@ async def run() -> None:
         # включаются ТОЛЬКО если FEEDBACK_AUTO_REPLY_ENABLED=true И есть ключ
         # с scope «Вопросы и отзывы». По умолчанию всё выключено (килл-свитч):
         # сам факт деплоя ничего не публикует.
+        # Клиент отзывов/вопросов поднимаем при наличии ключа со scope «Вопросы и
+        # отзывы» (НЕЗАВИСИМО от авто-ответов) — он нужен и автопостеру (Фаза 1),
+        # и агенту для propose_feedback_reply (Фаза 3, по кнопке подтверждения).
+        feedbacks_client: WBFeedbacksClient | None = None
+        if config.wb_feedbacks_api_key:
+            feedbacks_client = WBFeedbacksClient(
+                session=http_session, api_key=config.wb_feedbacks_api_key,
+            )
+
         feedback_responder: FeedbackResponder | None = None
         cabinet_advisor: CabinetAdvisor | None = None
+        cabinet_agent: CabinetAgent | None = None
         llm_client: LLMClient | None = None
         if config.llm_api_key:
             llm_client = LLMClient(
@@ -173,10 +186,7 @@ async def run() -> None:
                 timeout_seconds=config.llm_timeout_seconds,
             )
             logger.info("LLM enabled: model=%s base=%s", config.llm_model, config.llm_base_url)
-            if config.feedback_auto_reply_enabled and config.wb_feedbacks_api_key:
-                feedbacks_client = WBFeedbacksClient(
-                    session=http_session, api_key=config.wb_feedbacks_api_key,
-                )
+            if config.feedback_auto_reply_enabled and feedbacks_client is not None:
                 feedback_responder = FeedbackResponder(
                     feedbacks_client=feedbacks_client,
                     llm_client=llm_client,
@@ -202,6 +212,28 @@ async def run() -> None:
                 insight_engine=insight_engine, llm_client=llm_client,
             )
             logger.info("Cabinet advisor enabled (/advice)")
+
+        # Фаза 3: интерактивный диалог-агент (🤖 Ассистент / /chat). Нужны LLM +
+        # Seller-данные. Инструменты read-only; предложенные мутации — по кнопке.
+        if insight_engine is not None and llm_client is not None and config.agent_chat_enabled:
+            agent_toolset = AgentToolset(
+                business_repository=business_repository,
+                settings_repository=settings_repository,
+                seller_client=seller_client,
+                feedbacks_client=feedbacks_client,
+                default_tax_percent=config.profit_tax_percent,
+                default_logistics_per_unit_rub=config.profit_logistics_per_unit_rub,
+                default_acquiring_percent=config.profit_acquiring_percent,
+            )
+            cabinet_agent = CabinetAgent(
+                llm_client=llm_client,
+                toolset=agent_toolset,
+                dialog_repo=DialogRepository(database),
+                think=config.agent_think,
+                max_iterations=config.agent_max_iterations,
+                history_limit=config.agent_history_limit,
+            )
+            logger.info("Cabinet agent enabled (🤖 Ассистент / /chat)")
 
         updater = WbUpdateScheduler(
             config=config,
@@ -244,6 +276,9 @@ async def run() -> None:
             arb_scanner=arb_scanner,
             auto_observer=arb_auto_observer,
             cabinet_advisor=cabinet_advisor,
+            cabinet_agent=cabinet_agent,
+            feedbacks_client=feedbacks_client,
+            feedback_reply_repo=feedback_reply_repo,
         )
 
         await updater.start()

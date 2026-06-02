@@ -12,11 +12,16 @@ from __future__ import annotations
 
 from aiogram import Router
 from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 
 from app.config import AppConfig
 from app.handlers.common import ensure_allowed, remember_subscriber
 from app.storage.repositories import SubscriberRepository
+
+# Кнопка входа в режим диалога с LLM-агентом по кабинету (Фаза 3). Хендлер —
+# в app/handlers/agent_chat.py (импортирует эту константу, чтобы метка совпадала).
+AGENT_BUTTON = "🤖 Ассистент"
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
@@ -24,6 +29,7 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="🎯 Арбитраж"), KeyboardButton(text="💰 Финансы")],
             [KeyboardButton(text="📊 Аналитика"), KeyboardButton(text="⚙️ Настройки")],
+            [KeyboardButton(text=AGENT_BUTTON)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -46,9 +52,12 @@ def get_router(config: AppConfig, subscriber_repo: SubscriberRepository) -> Rout
         )
 
     @router.message(CommandStart())
-    async def cmd_start(message: Message) -> None:
+    async def cmd_start(message: Message, state: FSMContext) -> None:
         if not await ensure_allowed(message, config):
             return
+        # /start всегда выходит из любого FSM-режима (в т.ч. диалога-агента) —
+        # чистый сброс, заодно чинит подвисание AwaitingPrice/Tagging.
+        await state.clear()
         await remember_subscriber(message, subscriber_repo)
         await _show_main(message)
 

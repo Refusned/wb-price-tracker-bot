@@ -8,16 +8,19 @@ from app.arbitrage.repository import ArbitrageRepository
 from app.arbitrage.scanner import ArbitrageScanner
 from app.config import AppConfig
 from app.middlewares import AccessMiddleware
-from app.handlers import admin, business, common, decisions, main_menu, margin, missed_deals, purchase_prompts, spp_log, top10
+from app.handlers import admin, agent_chat, business, common, decisions, main_menu, margin, missed_deals, purchase_prompts, spp_log, top10
 from app.scheduler import WbUpdateScheduler
 from app.services.cabinet_advisor import CabinetAdvisor
+from app.services.cabinet_agent import CabinetAgent
 from app.services.insight_engine import InsightEngine
 from app.services.personal_spp_auto_collector import PersonalSppAutoCollector
 from app.storage.business_repository import BusinessRepository
 from app.storage.decision_snapshot_repository import DecisionSnapshotRepository
+from app.storage.feedback_reply_repository import FeedbackReplyRepository
 from app.storage.missed_deal_repository import MissedDealRepository
 from app.storage.personal_spp_repository import PersonalSppRepository
 from app.storage.stock_arrival_repository import StockArrivalRepository
+from app.wb.feedbacks_client import WBFeedbacksClient
 from app.storage.repositories import (
     ItemRepository,
     MetaRepository,
@@ -46,6 +49,9 @@ def build_dispatcher(
     arb_scanner: ArbitrageScanner | None = None,
     auto_observer: AutoObserver | None = None,
     cabinet_advisor: CabinetAdvisor | None = None,
+    cabinet_agent: CabinetAgent | None = None,
+    feedbacks_client: WBFeedbacksClient | None = None,
+    feedback_reply_repo: FeedbackReplyRepository | None = None,
 ) -> Dispatcher:
     dp = Dispatcher()
 
@@ -164,6 +170,23 @@ def build_dispatcher(
                 scanner=arb_scanner,
                 subscriber_repo=subscriber_repository,
                 auto_observer=auto_observer,
+            )
+        )
+
+    # Фаза 3: интерактивный диалог-агент. Роутер регистрируется ПОСЛЕДНИМ —
+    # все Command-роутеры (включая arbitrage) матчатся раньше, поэтому команды
+    # и кнопки меню работают и внутри режима диалога. Текст-хендлер агента ловит
+    # только не-команды в состоянии Active.
+    if cabinet_agent is not None:
+        dp.include_router(
+            agent_chat.get_router(
+                config=config,
+                cabinet_agent=cabinet_agent,
+                subscriber_repository=subscriber_repository,
+                business_repository=business_repository,
+                settings_repository=settings_repository,
+                feedbacks_client=feedbacks_client,
+                reply_repo=feedback_reply_repo,
             )
         )
 
