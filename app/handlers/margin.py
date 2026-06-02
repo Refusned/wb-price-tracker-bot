@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
@@ -116,6 +118,8 @@ def get_router(
 
         try:
             buy_price = float(args)
+            if not math.isfinite(buy_price):
+                raise ValueError
         except ValueError:
             await message.answer("Введите число. Пример: /calc 9500")
             return
@@ -173,6 +177,8 @@ def get_router(
 
         try:
             new_spp = float(args)
+            if not math.isfinite(new_spp):
+                raise ValueError
         except ValueError:
             await message.answer("Введите число. Пример: /setspp 24")
             return
@@ -197,6 +203,8 @@ def get_router(
 
         try:
             new_price = float(args)
+            if not math.isfinite(new_price):
+                raise ValueError
         except ValueError:
             await message.answer("Введите число. Пример: /setsellprice 12000")
             return

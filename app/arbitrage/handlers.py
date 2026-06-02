@@ -495,7 +495,7 @@ def get_router(
                     )
                     if cat is None or cat.get("samples", 0) < 3:
                         need_obs.append(
-                            f"• {subj} (нужно 3+ наблюдения)"
+                            f"• {safe_md(subj)} (нужно 3+ наблюдения)"
                         )
             if need_obs:
                 lines.append("")

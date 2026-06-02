@@ -81,6 +81,10 @@ def get_router(
             return
 
         if action == "skip":
+            prompt = await stock_arrival_repo.get_prompt(prompt_id)
+            if prompt is None or prompt["status"] != "pending":
+                await callback.answer("Уже обработан.", show_alert=True)
+                return
             await stock_arrival_repo.resolve(prompt_id, "ignored")
             await callback.answer("Пропустил.", show_alert=True)
             return

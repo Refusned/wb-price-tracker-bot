@@ -143,6 +143,9 @@ class SettingsRepository:
         except ValueError:
             return default
 
+    async def set_float(self, key: str, value: float) -> None:
+        await self.set_value(key, str(value))
+
     async def ensure_defaults(self, default_min_price: int) -> None:
         existing = await self.get_value("min_price_rub")
         if existing is None:

@@ -681,17 +681,23 @@ class WbUpdateScheduler:
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=60)
             except asyncio.TimeoutError:
-                now = datetime.now(MSK)  # МСК, не наивное локальное время сервера
-                today_str = now.strftime("%Y-%m-%d")
-                if now.hour == briefing_hour and now.minute >= briefing_minute:
-                    # last_briefing_date персистится в meta → брифинг не
-                    # дублируется после рестарта в том же дне (раньше дата жила
-                    # только в памяти и сбрасывалась при перезапуске).
-                    last = await self._meta_repository.get_value("last_briefing_date")
-                    if last != today_str:
-                        await self._send_briefing()
-                        await self._meta_repository.set_value("last_briefing_date", today_str)
-                        self._last_briefing_date = today_str
+                # Тело обёрнуто в try/except: сбой БД (locked/disk) НЕ должен
+                # убивать таску брифинга навсегда — иначе утренний дайджест
+                # тихо перестаёт приходить до рестарта процесса.
+                try:
+                    now = datetime.now(MSK)  # МСК, не наивное локальное время сервера
+                    today_str = now.strftime("%Y-%m-%d")
+                    if now.hour == briefing_hour and now.minute >= briefing_minute:
+                        # last_briefing_date персистится в meta → брифинг не
+                        # дублируется после рестарта в том же дне (раньше дата жила
+                        # только в памяти и сбрасывалась при перезапуске).
+                        last = await self._meta_repository.get_value("last_briefing_date")
+                        if last != today_str:
+                            await self._send_briefing()
+                            await self._meta_repository.set_value("last_briefing_date", today_str)
+                            self._last_briefing_date = today_str
+                except Exception:
+                    self._logger.exception("Briefing loop iteration failed")
 
     async def _send_briefing(self) -> None:
         if not self._insight_engine:

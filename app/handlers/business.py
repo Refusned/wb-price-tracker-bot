@@ -181,12 +181,13 @@ def get_router(
         if not anomalies:
             await message.answer("✅ Аномалий не обнаружено.")
             return
-        icon = {"critical": "🔴", "warning": "🟡", "info": "🔵"}
         lines = ["📊 Инсайты / аномалии", ""]
         for ins in anomalies:
-            lines.append(f"{icon.get(ins.severity, '•')} {ins.title}")
-            if ins.message:
-                lines.append(f"   {ins.message}")
+            lines.append(f"{ins.emoji} {ins.title}")
+            if ins.body:
+                lines.append(f"   {ins.body}")
+            if ins.action:
+                lines.append(f"   → {ins.action}")
         await message.answer("\n".join(lines))
 
     @router.message(Command("returns"))

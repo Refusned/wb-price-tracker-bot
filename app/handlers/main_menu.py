@@ -122,4 +122,18 @@ def get_router(config: AppConfig, subscriber_repo: SubscriberRepository) -> Rout
             parse_mode="Markdown",
         )
 
+    # Когда арбитраж выключен (ARBITRAGE_ENABLED=false), его роутер не
+    # регистрируется, и кнопка «🎯 Арбитраж» из меню осталась бы без хендлера
+    # (тап в пустоту). Регистрируем здесь понятный фолбэк. При включённом
+    # арбитраже этот хендлер НЕ ставится — кнопку ловит роутер арбитража.
+    if not config.arbitrage_enabled:
+        @router.message(lambda m: m.text == "🎯 Арбитраж")
+        async def arbitrage_disabled(message: Message) -> None:
+            if not await ensure_allowed(message, config):
+                return
+            await message.answer(
+                "🎯 Арбитраж сейчас выключен.\n"
+                "Включается через ARBITRAGE_ENABLED=true + WB_SELLER_API_KEY."
+            )
+
     return router
