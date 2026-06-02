@@ -190,7 +190,8 @@ async def test_new_dialog_resets_history() -> None:
     state = FakeState(data={"pending": {"0": {}}, "next_pid": 3}, state=AgentChatStates.Active)
     await new(_msg(NEW_BTN), state)
     assert agent.reset_calls == [1]
-    assert state._data["pending"] == {} and state._data["next_pid"] == 0
+    # pending снят; next_pid НЕ сбрасывается (монотонен — фикс коллизии старых кнопок)
+    assert state._data["pending"] == {} and state._data["next_pid"] == 3
 
 
 # ---------- dialog turn ----------
@@ -383,6 +384,108 @@ async def test_execute_feedback_already_handled() -> None:
         business_repository=FakeBiz(), settings_repository=FakeSettings(),  # type: ignore[arg-type]
         feedbacks_client=fb, reply_repo=repo, config=_cfg(shadow=False))
     assert "уже" in out.lower() and fb.answered == []
+
+
+async def test_callback_double_tap_single_use() -> None:
+    # За изоляцией апдタейтов (bot.py) + одноразовый pending: повторный тап того
+    # же pid НЕ исполняет действие второй раз (нет двойной закупки).
+    biz = FakeBiz()
+    router = _router(FakeAgent([]), biz=biz)
+    cb_handler = _handler(router, "agent_callback")
+    state = FakeState(data={"pending": _pending_purchase()}, state=AgentChatStates.Active)
+    await cb_handler(_cb(sign_payload("agent:do:0", SECRET)), state)
+    await cb_handler(_cb(sign_payload("agent:do:0", SECRET)), state)
+    assert len(biz.purchases) == 1  # второй тап — no-op (pending уже снят)
+
+
+async def test_pid_not_reset_on_new_dialog() -> None:
+    router = _router(FakeAgent([]))
+    new = _handler(router, "new_dialog")
+    state = FakeState(data={"pending": {"0": {}, "1": {}}, "next_pid": 5},
+                      state=AgentChatStates.Active)
+    await new(_msg(NEW_BTN), state)
+    assert state._data["next_pid"] == 5    # монотонен, НЕ сброшен в 0
+    assert state._data["pending"] == {}    # старые предложения сняты
+
+
+async def test_pid_not_reset_on_reenter() -> None:
+    router = _router(FakeAgent([]))
+    enter = _handler(router, "enter_button")
+    state = FakeState(data={"next_pid": 5}, state=None)
+    await enter(_msg(AGENT_BUTTON), state)
+    assert state._data["next_pid"] == 5    # сохранён через повторный вход
+    assert state._data["pending"] == {}
+
+
+async def test_dialog_turn_releases_busy_on_error(monkeypatch: Any) -> None:
+    monkeypatch.setattr(agent_chat.ChatActionSender, "typing", lambda **kw: _NullCtx())
+
+    class BoomAgent:
+        async def run_turn(self, *a: Any, **k: Any) -> Any:
+            raise RuntimeError("boom")
+
+        async def reset(self, *a: Any, **k: Any) -> None: ...
+
+    router = _router(BoomAgent())  # type: ignore[arg-type]
+    turn = _handler(router, "dialog_turn")
+    state = FakeState(data={"pending": {}, "next_pid": 0, "busy": False},
+                      state=AgentChatStates.Active)
+    msg = _msg("вопрос")
+    await turn(msg, state)
+    assert state._data["busy"] is False  # busy снят в finally — диалог не залип
+    assert any("❌" in str(c.args[0]) for c in msg.answer.call_args_list if c.args)
+
+
+async def test_execute_unknown_kind() -> None:
+    biz = FakeBiz()
+    out = await execute_action({"kind": "evil", "params": {}},
+                               business_repository=biz, settings_repository=FakeSettings(),  # type: ignore[arg-type]
+                               feedbacks_client=None, reply_repo=None, config=_cfg())
+    assert "❌" in out and biz.purchases == []
+
+
+async def test_execute_swallows_exception() -> None:
+    class BoomBiz:
+        async def add_purchase(self, **k: Any) -> int:
+            raise RuntimeError("db down")
+
+    out = await execute_action(
+        {"kind": "purchase", "params": {"nm_id": 1, "quantity": 1, "buy_price_per_unit": 5}},
+        business_repository=BoomBiz(), settings_repository=FakeSettings(),  # type: ignore[arg-type]
+        feedbacks_client=None, reply_repo=None, config=_cfg())
+    assert "❌ Ошибка" in out  # исключение не пробрасывается наружу
+
+
+async def test_execute_feedback_publish_fails() -> None:
+    from app.wb.feedbacks_client import FeedbacksApiError
+
+    class FbFail:
+        async def answer_feedback(self, *a: Any, **k: Any) -> None:
+            raise FeedbacksApiError("WB 500")
+
+        async def answer_question(self, *a: Any, **k: Any) -> None:
+            raise FeedbacksApiError("WB 500")
+
+    repo = FakeReply(handled=False)
+    out = await execute_action(
+        {"kind": "feedback_reply", "params": {"target_id": "F1", "target_kind": "feedback",
+                                              "text": "Спасибо за отзыв, рады что понравилось!"}},
+        business_repository=FakeBiz(), settings_repository=FakeSettings(),  # type: ignore[arg-type]
+        feedbacks_client=FbFail(), reply_repo=repo, config=_cfg(shadow=False))
+    assert "❌" in out and "publish_failed" in out
+    # идемпотентность: резерв pending записан, затем failed (без двойной публикации)
+    assert [r["status"] for r in repo.records] == ["pending", "failed"]
+
+
+async def test_execute_feedback_short_text_rejected() -> None:
+    fb = FakeFb()
+    repo = FakeReply()
+    out = await execute_action(
+        {"kind": "feedback_reply", "params": {"target_id": "F1", "target_kind": "feedback",
+                                              "text": "о"}},  # < ANSWER_MIN_LEN
+        business_repository=FakeBiz(), settings_repository=FakeSettings(),  # type: ignore[arg-type]
+        feedbacks_client=fb, reply_repo=repo, config=_cfg(shadow=False))
+    assert "❌" in out and fb.answered == []
 
 
 # ---------- фильтр сосуществования с командами ----------

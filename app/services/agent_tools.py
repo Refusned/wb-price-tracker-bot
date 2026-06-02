@@ -449,6 +449,8 @@ class AgentToolset:
         return self._dump({
             "ok": True, "kind": "feedback_reply",
             "params": {"target_id": target_id, "target_kind": kind, "text": text},
-            "summary": f"Ответить на {'отзыв' if kind == 'feedback' else 'вопрос'} {target_id}: "
-                       f"«{text[:80]}{'…' if len(text) > 80 else ''}»",
+            # Превью почти полного текста (а не 80 симв): владелец подтверждает
+            # необратимый публичный пост — он должен видеть, что реально уйдёт.
+            "summary": f"Ответить на {'отзыв' if kind == 'feedback' else 'вопрос'} {target_id}:\n"
+                       f"«{text[:600]}{'…' if len(text) > 600 else ''}»",
         })

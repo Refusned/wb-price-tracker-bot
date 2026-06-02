@@ -182,3 +182,48 @@ async def test_history_survives_restart(tmp_path: Path) -> None:
         assert "вопрос1" in dump and "ответ1" in dump  # прошлый ход подгружен
     finally:
         await db.close()
+
+
+async def test_invalid_proposals_not_collected(tmp_path: Path) -> None:
+    # propose_* вернул не-ok / битый JSON / params не dict → НИ ОДНОЙ кнопки-мутации
+    for bad in ('{"ok": false, "error": "no"}', "не json вовсе", '{"ok": true, "kind": "purchase", "params": "notadict"}'):
+        llm = FakeLLM([
+            _tools_msg([_tc("propose_purchase", {"nm_id": 111, "quantity": 1, "buy_price_per_unit": 5})]),
+            _final("ок"),
+        ])
+        tools = FakeToolset({"propose_purchase": bad})
+        db, agent = await _agent(tmp_path, llm, tools)
+        try:
+            turn = await agent.run_turn(1, "докупить?")
+            assert turn.proposals == [], f"bad={bad!r} не должен давать предложение"
+        finally:
+            await db.close()
+
+
+async def test_force_final_llm_error_graceful(tmp_path: Path) -> None:
+    # лимит итераций исчерпан, финальный ход (tools=None) тоже падает → graceful, без исключения
+    class FailFinalLLM(FakeLLM):
+        async def chat(self, messages, *, tools=None, temperature=0.3, num_predict=None, think=None) -> ChatResult:
+            self.calls.append({"tools": tools, "think": think})
+            if tools is None:  # форс-финал
+                raise LLMError("final down")
+            return _tools_msg([_tc("get_stock_summary", {})])
+
+    db, agent = await _agent(tmp_path, FailFinalLLM([]), FakeToolset({"get_stock_summary": "{}"}),
+                             max_iterations=2)
+    try:
+        turn = await agent.run_turn(1, "?")
+        assert "не удалось завершить" in turn.text.lower()
+    finally:
+        await db.close()
+
+
+async def test_reset_clears_history(tmp_path: Path) -> None:
+    db, agent = await _agent(tmp_path, FakeLLM([_final("ответ")]), FakeToolset())
+    try:
+        await agent.run_turn(1, "вопрос")
+        assert await DialogRepository(db).count(1) == 2  # user + assistant
+        await agent.reset(1)
+        assert await DialogRepository(db).count(1) == 0
+    finally:
+        await db.close()

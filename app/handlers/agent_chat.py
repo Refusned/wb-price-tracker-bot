@@ -8,8 +8,10 @@
 
 Money-safety: агент только читает и СОВЕТУЕТ. Предложенные им мутации (закупка/
 настройка/ответ покупателю) исполняются ТОЛЬКО по нажатию подписанной (HMAC)
-inline-кнопки — здесь, через существующий код, с re-валидацией и уважением
-shadow_mode. Пендинги — в FSM data по монотонному id (без коллизий callback_data).
+inline-кнопки — здесь, через существующий код, с re-валидацией. Публичный ответ
+покупателю по подтверждению публикуется сразу (без shadow-гейта) — защита
+контент-гейтом + идемпотентностью. Пендинги — в FSM data по НЕ сбрасываемому в
+рамках сессии монотонному id (старая кнопка не коллизирует с новым предложением).
 """
 from __future__ import annotations
 
@@ -80,8 +82,13 @@ def get_router(
         if not await ensure_allowed(message, config):
             return
         await remember_subscriber(message, subscriber_repository)
+        # pending очищаем, но next_pid НЕ сбрасываем — иначе старая (не нажатая)
+        # кнопка из прошлого диалога могла бы исполнить НОВОЕ предложение на том
+        # же pid. Монотонный счётчик в рамках FSM-сессии исключает коллизию.
+        prev = await state.get_data()
+        next_pid = int(prev.get("next_pid") or 0)
         await state.set_state(AgentChatStates.Active)
-        await state.update_data(pending={}, next_pid=0, busy=False)
+        await state.update_data(pending={}, next_pid=next_pid, busy=False)
         await message.answer(
             "🤖 Режим диалога по кабинету включён.\n\n"
             "Спрашивай свободным текстом: «почему упали продажи по 019», «что выгоднее "
@@ -116,7 +123,9 @@ def get_router(
     @router.message(AgentChatStates.Active, F.text == NEW_BTN)
     async def new_dialog(message: Message, state: FSMContext) -> None:
         await cabinet_agent.reset(message.chat.id)
-        await state.update_data(pending={}, next_pid=0)
+        prev = await state.get_data()
+        next_pid = int(prev.get("next_pid") or 0)  # монотонен, не сбрасываем
+        await state.update_data(pending={}, next_pid=next_pid)
         await message.answer("🆕 Начат новый диалог — прошлый контекст очищен.",
                              reply_markup=_dialog_keyboard())
 

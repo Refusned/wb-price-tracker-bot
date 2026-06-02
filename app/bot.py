@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from aiogram import Dispatcher
+from aiogram.fsm.storage.memory import SimpleEventIsolation
 
 from app.arbitrage import handlers as arbitrage_handlers
 from app.arbitrage.auto_observer import AutoObserver
@@ -53,7 +54,12 @@ def build_dispatcher(
     feedbacks_client: WBFeedbacksClient | None = None,
     feedback_reply_repo: FeedbackReplyRepository | None = None,
 ) -> Dispatcher:
-    dp = Dispatcher()
+    # events_isolation: сериализуем апдейты одного чата (один key за раз). Без
+    # этого aiogram гоняет апдейты конкурентными тасками, а MemoryStorage без
+    # per-key лока → двойной тап кнопки подтверждения мог исполнить мутацию
+    # дважды (двойная закупка / двойной публичный ответ). Изоляция закрывает
+    # эту гонку (и для callback'ов, и для busy-guard диалога).
+    dp = Dispatcher(events_isolation=SimpleEventIsolation())
 
     # Deny-by-default access gate. outer-middleware на update покрывает message,
     # callback_query и все прочие типы апдейтов ДО фильтров и хендлеров.
