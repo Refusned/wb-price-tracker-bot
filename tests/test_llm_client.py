@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from app.llm.client import LLMClient, LLMError
+from app.llm.client import ChatResult, LLMClient, LLMError, ToolCall
 
 pytestmark = pytest.mark.asyncio
 
@@ -126,3 +126,93 @@ async def test_extract_content_tolerates_malformed() -> None:
     assert f({}) == ""
     assert f({"message": "notadict"}) == ""
     assert f({"message": {"content": None}}) == ""
+
+
+# ---------- chat() / tool-use (Фаза 3) ----------
+
+def _ok_msg(message: Any) -> _FakeResponse:
+    return _FakeResponse(200, {"message": message})
+
+
+async def test_chat_parses_tool_calls_and_tolerates_empty_content() -> None:
+    session = _FakeSession([_ok_msg({
+        "role": "assistant", "content": "",
+        "tool_calls": [{"type": "function",
+                        "function": {"name": "get_stock", "arguments": {"days": 7}}}],
+    })])
+    client = LLMClient(session, api_key="K", backoff_seconds=0)  # type: ignore[arg-type]
+
+    res = await client.chat(
+        [{"role": "user", "content": "сколько остатков?"}],
+        tools=[{"type": "function", "function": {"name": "get_stock"}}],
+        think=False,
+    )
+
+    assert isinstance(res, ChatResult)
+    assert res.content == ""  # пустой content при tool_calls — НЕ ошибка
+    assert len(res.tool_calls) == 1
+    tc = res.tool_calls[0]
+    assert tc.name == "get_stock"
+    assert tc.arguments == {"days": 7}
+    assert tc.raw["function"]["name"] == "get_stock"  # raw сохранён для истории
+    body = session.calls[0]["json"]
+    assert body["tools"][0]["function"]["name"] == "get_stock"
+    assert body["think"] is False
+    assert body["messages"] == [{"role": "user", "content": "сколько остатков?"}]
+
+
+async def test_chat_final_answer_without_tools_or_think() -> None:
+    session = _FakeSession([_ok("Готовый ответ")])
+    client = LLMClient(session, api_key="K", backoff_seconds=0)  # type: ignore[arg-type]
+
+    res = await client.chat([{"role": "user", "content": "привет"}])
+
+    assert res.content == "Готовый ответ"
+    assert res.tool_calls == []
+    assert "tools" not in session.calls[0]["json"]
+    assert "think" not in session.calls[0]["json"]
+
+
+async def test_chat_retries_on_http_error_then_succeeds() -> None:
+    session = _FakeSession([_FakeResponse(500, {"error": "x"}), _ok("ок")])
+    client = LLMClient(session, api_key="K", retries=2, backoff_seconds=0)  # type: ignore[arg-type]
+
+    res = await client.chat([{"role": "user", "content": "q"}])
+
+    assert res.content == "ок"
+    assert len(session.calls) == 2
+
+
+async def test_chat_raises_after_exhaustion() -> None:
+    session = _FakeSession([_FakeResponse(500, {}), _FakeResponse(503, {})])
+    client = LLMClient(session, api_key="K", retries=2, backoff_seconds=0)  # type: ignore[arg-type]
+
+    with pytest.raises(LLMError):
+        await client.chat([{"role": "user", "content": "q"}])
+    assert len(session.calls) == 2
+
+
+async def test_parse_arguments_handles_dict_string_and_garbage() -> None:
+    f = LLMClient._parse_arguments
+    assert f({"a": 1}) == {"a": 1}
+    assert f('{"a": 1}') == {"a": 1}
+    assert f("   ") == {}
+    assert f("not json") == {}
+    assert f(123) == {}
+    assert f("[1, 2]") == {}  # валидный JSON, но не объект
+
+
+async def test_extract_chat_result_tolerates_malformed() -> None:
+    f = LLMClient._extract_chat_result
+    r = f(123)
+    assert r.content == "" and r.tool_calls == []
+    r = f({"message": {"content": None, "tool_calls": "notalist"}})
+    assert r.content == "" and r.tool_calls == []
+    # битые элементы tool_calls пропускаются, валидные — остаются
+    r = f({"message": {"content": "x", "tool_calls": [
+        {"nofunc": 1},
+        {"function": {"name": ""}},
+        {"function": {"name": "ok", "arguments": {}}},
+    ]}})
+    assert r.content == "x"
+    assert [tc.name for tc in r.tool_calls] == ["ok"]

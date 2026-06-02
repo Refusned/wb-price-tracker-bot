@@ -1,3 +1,3 @@
-from app.llm.client import LLMClient, LLMError
+from app.llm.client import ChatResult, LLMClient, LLMError, ToolCall
 
-__all__ = ["LLMClient", "LLMError"]
+__all__ = ["ChatResult", "LLMClient", "LLMError", "ToolCall"]

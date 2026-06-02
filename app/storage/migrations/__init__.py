@@ -25,6 +25,7 @@ from . import (
     m009_arb_keywords_labels,
     m010_feedback_replies,
     m011_feedback_attempts,
+    m012_agent_dialog,
 )
 
 MIGRATIONS = [
@@ -39,4 +40,5 @@ MIGRATIONS = [
     m009_arb_keywords_labels,
     m010_feedback_replies,
     m011_feedback_attempts,
+    m012_agent_dialog,
 ]
