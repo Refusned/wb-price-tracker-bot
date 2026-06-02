@@ -5,6 +5,7 @@ Handlers for business analytics commands: /today, /yesterday, /week, /month,
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Router
@@ -486,6 +487,8 @@ def get_router(
         args = (command.args or "").strip()
         try:
             val = float(args.replace(",", "."))
+            if not math.isfinite(val):
+                raise ValueError
             if val < 0 or val > 50:
                 raise ValueError
         except ValueError:
@@ -501,6 +504,8 @@ def get_router(
         args = (command.args or "").strip()
         try:
             val = float(args.replace(",", "."))
+            if not math.isfinite(val):
+                raise ValueError
             if val < 0 or val > 1000:
                 raise ValueError
         except ValueError:
@@ -516,6 +521,8 @@ def get_router(
         args = (command.args or "").strip()
         try:
             val = float(args.replace(",", "."))
+            if not math.isfinite(val):
+                raise ValueError
             if val < 0 or val > 10:
                 raise ValueError
         except ValueError:

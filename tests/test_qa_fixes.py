@@ -184,6 +184,17 @@ async def test_settax_persists_via_set_float() -> None:
     assert "✅" in msg.answer.call_args.args[0]
 
 
+async def test_settax_rejects_nan() -> None:
+    # /review-находка: после включения set_float (#1) nan обходил диапазон-guard
+    # (nan<0 и nan>50 оба False) и отравлял profit_tax_percent. Симметрично #7.
+    settings = FakeSettings()
+    handler = _handler(_business_router(settings=settings), "settax_handler")
+    msg = _msg()
+    await handler(msg, _cmd("nan"))
+    assert "profit_tax_percent" not in settings.floats   # nan НЕ сохранён
+    assert "Использование" in msg.answer.call_args.args[0]
+
+
 # ── #2: /insights рендерит аномалию без падения ──────────────────────
 
 async def test_insights_renders_anomaly_without_crash() -> None:
