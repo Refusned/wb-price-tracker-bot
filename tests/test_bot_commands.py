@@ -1,9 +1,9 @@
-"""Меню команд Telegram: список валиден по ограничениям Bot API."""
+"""Меню команд и профиль бота: валидны по ограничениям Bot API."""
 from __future__ import annotations
 
 import re
 
-from app.bot import bot_commands
+from app.bot import BOT_ABOUT, BOT_DESCRIPTION, bot_commands
 
 _NAME_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 
@@ -16,6 +16,11 @@ def test_commands_valid_for_telegram() -> None:
     for c in commands:
         assert _NAME_RE.match(c.command), f"недопустимое имя: {c.command}"
         assert 1 <= len(c.description) <= 256, f"описание вне лимита: {c.command}"
+
+
+def test_profile_texts_within_api_limits() -> None:
+    assert 1 <= len(BOT_ABOUT) <= 120       # setMyShortDescription
+    assert 1 <= len(BOT_DESCRIPTION) <= 512  # setMyDescription
 
 
 def test_commands_have_registered_handlers() -> None:

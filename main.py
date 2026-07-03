@@ -14,7 +14,7 @@ from app.arbitrage.scanner import ArbitrageScanner
 from app.arbitrage.spp_resolver import PersonalSppResolver
 from app.arbitrage.tariffs_cache import TariffsCache
 from app.arbitrage.tariffs_repository import TariffsRepository
-from app.bot import bot_commands, build_dispatcher
+from app.bot import BOT_ABOUT, BOT_DESCRIPTION, bot_commands, build_dispatcher
 from app.config import load_config
 from app.logging_setup import setup_logging
 from app.scheduler import WbUpdateScheduler
@@ -305,13 +305,15 @@ async def run() -> None:
             feedback_reply_repo=feedback_reply_repo,
         )
 
-        # Меню команд Telegram (кнопка «Меню» + автокомплит «/»). Сбой
-        # регистрации не должен ронять старт — бот работает и без меню.
+        # Меню команд + профиль бота (About/Description как в BotFather).
+        # Сбой регистрации не должен ронять старт — бот работает и без них.
         try:
             await bot.set_my_commands(bot_commands())
-            logger.info("Bot commands menu registered (%d commands)", len(bot_commands()))
+            await bot.set_my_short_description(short_description=BOT_ABOUT)
+            await bot.set_my_description(description=BOT_DESCRIPTION)
+            logger.info("Bot commands menu + profile registered (%d commands)", len(bot_commands()))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("set_my_commands failed: %s", exc)
+            logger.warning("bot menu/profile registration failed: %s", exc)
 
         await updater.start()
         logger.info("Bot polling started")
