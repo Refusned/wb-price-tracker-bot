@@ -18,9 +18,21 @@ def format_iso_datetime(iso_value: str | None) -> str:
         return "нет данных"
     try:
         dt = datetime.fromisoformat(iso_value)
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%Y-%m-%d %H:%M")
     except ValueError:
         return iso_value
+
+
+def format_percent(value: float | int) -> str:
+    """Единый вид процентов: 24 → «24%», 24.5 → «24.5%» (без хвоста .0)."""
+    return f"{float(value):g}%"
+
+
+def shorten(text: str, limit: int) -> str:
+    """Обрезка с «…» — чтобы усечение не выглядело обрывом."""
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)].rstrip() + "…"
 
 
 def _estimate_wb_site_price(api_price: float) -> float:
