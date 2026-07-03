@@ -31,7 +31,7 @@ from app.utils.business_formatting import (
 )
 from app.utils.formatting import format_price_rub
 
-from .common import ensure_allowed, remember_subscriber
+from .common import answer_safe, ensure_allowed, remember_subscriber
 
 
 def get_router(
@@ -171,7 +171,7 @@ def get_router(
         except Exception:
             await message.answer("❌ Не удалось собрать разбор. Подробности в логах.")
             return
-        await message.answer(f"📈 Разбор кабинета\n\n{advice[:3900]}")
+        await answer_safe(message, f"📈 Разбор кабинета\n\n{advice[:3900]}")
 
     @router.message(Command("insights"))
     async def insights_handler(message: Message) -> None:

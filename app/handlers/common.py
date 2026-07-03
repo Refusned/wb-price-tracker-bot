@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from aiogram import Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import Message
 
@@ -39,6 +40,18 @@ async def ensure_allowed(message: Message, config: AppConfig) -> bool:
 
     await message.answer("Доступ запрещён.")
     return False
+
+
+async def answer_safe(message: Message, text: str, **kwargs) -> None:
+    """Ответ LLM-текстом: пробуем Markdown, при битой разметке — plain.
+
+    Модель просят писать без разметки, но нечётные */_ в тексте (или сущность,
+    разрезанная обрезкой лимита) валят parse — тогда шлём как есть.
+    """
+    try:
+        await message.answer(text, parse_mode="Markdown", **kwargs)
+    except TelegramBadRequest:
+        await message.answer(text, **kwargs)
 
 
 async def remember_subscriber(message: Message, subscriber_repository: SubscriberRepository) -> None:

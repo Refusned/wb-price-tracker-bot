@@ -35,7 +35,7 @@ from aiogram.types import (
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.config import AppConfig
-from app.handlers.common import ensure_allowed, remember_subscriber
+from app.handlers.common import answer_safe, ensure_allowed, remember_subscriber
 from app.handlers.main_menu import AGENT_BUTTON, main_menu_keyboard
 from app.security import sign_payload, verify_payload
 from app.services.agent_tools import SETTINGS_INT_KEYS, SETTINGS_PARAMS
@@ -151,7 +151,7 @@ def get_router(
         try:
             async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
                 turn = await cabinet_agent.run_turn(message.chat.id, message.text or "")
-            await message.answer((turn.text or "…")[:_REPLY_LIMIT])
+            await answer_safe(message, (turn.text or "…")[:_REPLY_LIMIT])
             for proposal in turn.proposals:
                 pid = str(next_pid)
                 next_pid += 1
