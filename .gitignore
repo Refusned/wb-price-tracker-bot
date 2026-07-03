@@ -29,3 +29,15 @@ SPRINT_STATUS.md
 REMINDER_DAY6_GATE.md
 /plans/
 *.local.md
+
+# Анализ кабинета — юнит-экономика/маржа/ниши = бизнес-стратегия, НЕ публиковать.
+.claude/skills/wb-cabinet-analysis/
+tools/cabinet_*.py
+tools/market_scan*.py
+tools/niche_stats.py
+tools/spp_probe*.py
+# Тест импортирует tools/market_scan.py (не публикуется) — держим локально.
+tests/test_market_scan_margin.py
+
+# Локальные настройки Claude Code (пути машины).
+.claude/settings.local.json
