@@ -128,8 +128,9 @@ class AppConfig:
     # HMAC secret for signing Telegram callback payloads on mutating inline buttons.
     # Bot MUST refuse to start without this set if inline-button handlers are enabled.
     callback_signing_secret: str
-    # Stock arrival detector: minimum positive delta in SUM(quantity+in_way_to+in_way_from)
-    # per nm_id to trigger a "what did you pay?" prompt. Default 5 units.
+    # Stock arrival detector: minimum positive delta in SUM(quantity) (ДОСТУПНЫЙ
+    # остаток, без in_way_to/in_way_from) per nm_id to trigger a "what did you
+    # pay?" prompt. Default 5 units.
     stock_arrival_delta_threshold: int
     # Keywords (lowercase, comma-separated in env) to EXCLUDE from /top10 and
     # all price scanning. Match by substring on item.name.lower(). Use for

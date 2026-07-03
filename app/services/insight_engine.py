@@ -35,6 +35,7 @@ class BriefingData:
     market_min_price: float | None   # минимальная цена конкурентов
     recommended_buy_count: int       # сколько стоит купить
     insights: list[Insight]
+    stock_synced_at: str | None = None  # ISO время снимка остатков (MAX updated_at)
 
 
 class InsightEngine:
@@ -71,6 +72,10 @@ class InsightEngine:
         stock_summary = await self._business.get_stock_summary()
         total_stock = sum(int(s.get("total_qty", 0) or 0) for s in stock_summary)
         in_way = sum(int(s.get("total_in_way_to", 0) or 0) for s in stock_summary)
+        stock_synced_at = max(
+            (str(s["last_update"]) for s in stock_summary if s.get("last_update")),
+            default=None,
+        )
 
         days_left = (total_stock / velocity) if velocity > 0 else float("inf")
 
@@ -103,6 +108,7 @@ class InsightEngine:
             market_min_price=market_min_price,
             recommended_buy_count=recommended_buy_count,
             insights=insights,
+            stock_synced_at=stock_synced_at,
         )
 
     async def _generate_insights(

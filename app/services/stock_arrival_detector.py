@@ -17,6 +17,11 @@ class StockArrivalDetector:
     """Detects new FBS/FBO stock arrivals and creates pending prompts.
 
     Called by the scheduler after each upsert_stocks() cycle.
+
+    Сигнал прихода — рост ДОСТУПНОГО остатка (own_stocks.quantity), без
+    in_way_to_client/in_way_from_client: их движение (продажи в доставке и
+    возвраты в пути) не является закупкой и раньше давало фантомные партии.
+    Это же выравнивает «Было→стало» с «Остатком» в кабинете WB.
     """
 
     def __init__(
@@ -133,11 +138,12 @@ class StockArrivalDetector:
                     ),
                     MAX(s.supplier_article)
                 ) AS supplier_article,
-                SUM(
-                    COALESCE(s.quantity, 0)
-                    + COALESCE(s.in_way_to_client, 0)
-                    + COALESCE(s.in_way_from_client, 0)
-                ) AS current_total,
+                -- Только ДОСТУПНЫЙ остаток (как «Остаток» в кабинете WB).
+                -- in_way_to_client (продажи в доставке) и in_way_from_client
+                -- (возвраты в пути) НЕ суммируем: их постоянное движение давало
+                -- фантомные «новые партии» (см. m014 + Шаг 0 от 2026-06-24,
+                -- где quantity=0, а всё «количество» сидело в пути/возвратах).
+                SUM(COALESCE(s.quantity, 0)) AS current_total,
                 COALESCE(MAX(i.name), MAX(s.subject)) AS name
             FROM own_stocks s
             LEFT JOIN items i ON i.nm_id = CAST(s.nm_id AS TEXT)

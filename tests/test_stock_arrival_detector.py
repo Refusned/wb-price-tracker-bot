@@ -166,29 +166,107 @@ async def test_scan_negative_delta_no_prompt(tmp_path: Path) -> None:
         await db.close()
 
 
-async def test_scan_returns_in_flight_no_false_positive(tmp_path: Path) -> None:
+async def test_scan_ignores_in_transit_and_returns(tmp_path: Path) -> None:
+    """Главная регрессия: рост in_way_to_client/in_way_from_client (продажи в
+    доставке и возвраты в пути) НЕ должен порождать «новую партию».
+
+    Боевой кейс 2026-06-24: quantity=0, а всё «количество» сидело в пути (12)
+    и возвратах (32). Старый детектор (SUM quantity+in_way_to+in_way_from)
+    выстрелил бы фантомом; quantity-only — нет.
+    """
     db, business_repo, stock_arrival_repo, detector, bot = await make_detector(tmp_path)
     try:
         await upsert_stock(
-            business_repo,
-            nm_id=100,
-            quantity=5,
-            in_way_from_client=2,
+            business_repo, nm_id=100, quantity=0,
+            in_way_to_client=2, in_way_from_client=3,
         )
         assert await detector.scan() == 0
         bot.reset_mock()
 
+        # Доступный остаток по-прежнему 0, но путь/возвраты резко выросли.
         await upsert_stock(
-            business_repo,
-            nm_id=100,
-            quantity=7,
-            in_way_from_client=0,
+            business_repo, nm_id=100, quantity=0,
+            in_way_to_client=12, in_way_from_client=23,
         )
         created = await detector.scan()
 
+        baselines = await stock_arrival_repo.get_baselines()
         assert created == 0
         assert await stock_arrival_repo.count_pending() == 0
+        assert baselines[100]["last_total_full"] == 0  # baseline = доступный остаток
         bot.send_message.assert_not_awaited()
+    finally:
+        await db.close()
+
+
+async def test_scan_real_arrival_prompts_despite_in_transit_noise(tmp_path: Path) -> None:
+    """Реальный приход (рост доступного quantity) срабатывает, даже если
+    одновременно шумят in_way-поля; qty_delta = прирост ДОСТУПНОГО остатка."""
+    db, business_repo, stock_arrival_repo, detector, bot = await make_detector(tmp_path)
+    try:
+        await upsert_stock(
+            business_repo, nm_id=100, quantity=0,
+            in_way_to_client=5, in_way_from_client=5,
+        )
+        assert await detector.scan() == 0
+        bot.reset_mock()
+
+        # На полку реально приехало +8, in_way меняется независимо.
+        await upsert_stock(
+            business_repo, nm_id=100, quantity=8,
+            in_way_to_client=9, in_way_from_client=1,
+        )
+        created = await detector.scan()
+
+        pending = await stock_arrival_repo.get_pending()
+        baselines = await stock_arrival_repo.get_baselines()
+        assert created == 1
+        assert pending[0]["qty_delta"] == 8
+        assert pending[0]["baseline_total"] == 0
+        assert pending[0]["current_total"] == 8
+        assert baselines[100]["last_total_full"] == 8
+        bot.send_message.assert_awaited_once()
+    finally:
+        await db.close()
+
+
+async def test_m014_resets_baselines_and_expires_pending(tmp_path: Path) -> None:
+    """m014 готовит чистый переход на quantity-only: сбрасывает старые
+    baseline (хранили quantity_full) и истекает фантомные pending-промпты."""
+    from app.storage.migrations import m014_stock_arrival_quantity_only as m014
+
+    db, _, stock_arrival_repo, _, _ = await make_detector(tmp_path)
+    try:
+        await stock_arrival_repo.upsert_baselines(
+            [
+                {
+                    "nm_id": 100,
+                    "supplier_article": "A-100",
+                    "last_total_full": 20,  # старая quantity_full-семантика
+                    "last_seen_at": "2026-06-01T00:00:00+00:00",
+                }
+            ]
+        )
+        prompt_id = await stock_arrival_repo.create_prompt(
+            nm_id=100,
+            supplier_article="A-100",
+            qty_delta=8,
+            baseline_total=5,
+            current_total=13,
+            detected_at="2026-06-01T00:00:00+00:00",
+            chat_id=123,
+        )
+        assert prompt_id is not None
+        assert await stock_arrival_repo.count_pending() == 1
+
+        conn = db._require_conn()
+        await m014.up(conn)
+        await conn.commit()
+
+        assert await stock_arrival_repo.get_baselines() == {}
+        assert await stock_arrival_repo.count_pending() == 0
+        prompt = await stock_arrival_repo.get_prompt(prompt_id)
+        assert prompt is not None and prompt["status"] == "expired"
     finally:
         await db.close()
 

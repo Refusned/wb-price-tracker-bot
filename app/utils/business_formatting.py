@@ -3,8 +3,25 @@ Formatters for business events: orders, sales, returns, briefing.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from app.services.insight_engine import BriefingData
 from app.utils.formatting import format_iso_datetime, format_price_rub
+
+_MSK = timezone(timedelta(hours=3))
+
+
+def _format_msk_short(iso_value: str | None) -> str | None:
+    """ISO-время (UTC) → 'ДД.ММ ЧЧ:ММ' по МСК. None при пустом/битом значении."""
+    if not iso_value:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_MSK).strftime("%d.%m %H:%M")
 
 
 def build_new_order_alert(order: dict) -> str:
@@ -111,6 +128,9 @@ def build_briefing_message(briefing: BriefingData) -> str:
         lines.append(f"  Хватит на: {briefing.days_left:.1f} дн")
     else:
         lines.append("  Хватит на: неопределённо")
+    synced = _format_msk_short(briefing.stock_synced_at)
+    if synced:
+        lines.append(f"  обновлено: {synced} МСК (= «Остаток» в кабинете на этот момент)")
 
     if briefing.market_min_price:
         lines.extend([
