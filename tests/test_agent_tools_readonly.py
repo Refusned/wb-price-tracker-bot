@@ -74,6 +74,24 @@ class FakeSettings:
         WRITES.append("set_float")
 
 
+class FakeMeta:
+    async def get_value(self, key: str) -> str | None:
+        return {
+            "last_success_update_at": "2020-01-01T00:00:00+00:00",
+            "last_update_status": "ok",
+            "last_tracked_count": "3",
+        }.get(key)
+
+    # WRITE — НЕ должен вызываться из toolset
+    async def set_value(self, *a: Any, **k: Any) -> None:
+        WRITES.append("meta.set_value")
+
+
+class FakeItems:
+    async def count_items(self) -> int:
+        return 42
+
+
 class FakeSeller:
     def __init__(self) -> None:
         self.calls = 0
@@ -108,6 +126,8 @@ def _toolset() -> tuple[AgentToolset, FakeSeller]:
         settings_repository=FakeSettings(),  # type: ignore[arg-type]
         seller_client=seller,  # type: ignore[arg-type]
         feedbacks_client=FakeFeedbacks(),  # type: ignore[arg-type]
+        meta_repository=FakeMeta(),
+        item_repository=FakeItems(),
     )
     return ts, seller
 
@@ -122,11 +142,15 @@ _EXERCISE = [
     ("get_total_profit", {}),
     ("get_stock_summary", {}),
     ("get_returns", {}),
+    ("get_settings", {}),
+    ("get_bot_health", {}),
     ("get_funnel", {}),
     ("get_unanswered_feedbacks", {}),
     ("get_unanswered_questions", {}),
     ("propose_purchase", {"nm_id": 111, "quantity": 10, "buy_price_per_unit": 500}),
-    ("propose_profit_setting", {"param": "tax", "value": 3}),
+    ("propose_setting", {"param": "tax", "value": 3}),
+    ("propose_setting", {"param": "spp", "value": 24}),
+    ("propose_setting", {"param": "min_price", "value": 9500}),
     ("propose_feedback_reply", {"target_id": "F1", "kind": "feedback",
                                 "text": "Спасибо большое за тёплый отзыв!"}),
 ]
@@ -147,9 +171,9 @@ async def test_registry_matches_allowlist() -> None:
     assert set(ts.tool_names()) == {
         "get_period_summary", "get_daily_metrics", "get_top_articles",
         "get_profit_breakdown", "get_total_profit", "get_stock_summary",
-        "get_returns", "get_funnel", "get_unanswered_feedbacks",
-        "get_unanswered_questions", "propose_purchase", "propose_profit_setting",
-        "propose_feedback_reply",
+        "get_returns", "get_settings", "get_bot_health", "get_funnel",
+        "get_unanswered_feedbacks", "get_unanswered_questions",
+        "propose_purchase", "propose_setting", "propose_feedback_reply",
     }
 
 
@@ -163,8 +187,10 @@ async def test_optional_tools_absent_without_clients() -> None:
     assert "get_funnel" not in names               # нет seller_client
     assert "get_unanswered_feedbacks" not in names  # нет feedbacks_client
     assert "propose_feedback_reply" not in names
+    assert "get_bot_health" not in names            # нет meta_repository
     assert "propose_purchase" in names              # локальные — всегда
-    assert "propose_profit_setting" in names
+    assert "propose_setting" in names
+    assert "get_settings" in names
 
 
 async def test_read_tools_return_expected_shapes() -> None:
@@ -205,14 +231,49 @@ async def test_propose_purchase_validates_article_and_amounts() -> None:
     assert bad_qty["ok"] is False  # qty <= 0
 
 
-async def test_propose_profit_setting_range() -> None:
+async def test_propose_setting_range() -> None:
     ts, _ = _toolset()
-    ok = json.loads(await ts.call("propose_profit_setting", {"param": "tax", "value": 3}))
+    ok = json.loads(await ts.call("propose_setting", {"param": "tax", "value": 3}))
     assert ok["ok"] is True and ok["params"]["settings_key"] == "profit_tax_percent"
-    bad = json.loads(await ts.call("propose_profit_setting", {"param": "tax", "value": 99}))
+    assert ok["kind"] == "profit_setting"  # исторический kind — контракт кнопки
+    bad = json.loads(await ts.call("propose_setting", {"param": "tax", "value": 99}))
     assert bad["ok"] is False  # вне [0;50]
-    bad2 = json.loads(await ts.call("propose_profit_setting", {"param": "wat", "value": 1}))
+    bad2 = json.loads(await ts.call("propose_setting", {"param": "wat", "value": 1}))
     assert bad2["ok"] is False  # неизвестный param
+
+
+async def test_propose_setting_expanded_whitelist() -> None:
+    """Агент может чинить ЛЮБУЮ настройку из whitelist, не только прибыльные."""
+    ts, _ = _toolset()
+    spp = json.loads(await ts.call("propose_setting", {"param": "spp", "value": 24.5}))
+    assert spp["ok"] is True and spp["params"]["settings_key"] == "spp_percent"
+    over = json.loads(await ts.call("propose_setting", {"param": "spp", "value": 51}))
+    assert over["ok"] is False  # СПП максимум 50 — как в /setspp
+
+    cooldown = json.loads(await ts.call("propose_setting",
+                                        {"param": "alert_cooldown", "value": 45.7}))
+    assert cooldown["ok"] is True
+    assert cooldown["params"]["value"] == 46.0  # целочисленный ключ округлён
+
+    nan = json.loads(await ts.call("propose_setting", {"param": "tax", "value": float("nan")}))
+    assert nan["ok"] is False  # nan-guard
+
+
+async def test_get_settings_snapshot() -> None:
+    ts, _ = _toolset()
+    out = json.loads(await ts.call("get_settings", {}))
+    params = {row["param"]: row for row in out["settings"]}
+    assert {"tax", "spp", "sell_price", "min_price", "alert_cooldown"} <= set(params)
+    assert params["tax"]["value"] == 2.0  # дефолт из конструктора
+
+
+async def test_get_bot_health_reports_staleness() -> None:
+    ts, _ = _toolset()
+    out = json.loads(await ts.call("get_bot_health", {}))
+    assert out["last_scan_status"] == "ok"
+    assert out["items_in_cache"] == 42
+    assert out["cache_stale"] is True  # снимок от 09:00 старше max_cache_age
+    assert out["cache_age_seconds"] > 0
 
 
 async def test_propose_feedback_reply_content_gate() -> None:

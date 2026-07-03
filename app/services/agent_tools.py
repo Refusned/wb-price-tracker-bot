@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
@@ -26,12 +27,31 @@ from app.wb.seller_client import SellerClient
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[str]]
 
-# Настроечные ключи прибыли + допустимые диапазоны (как в /settax,/setlogistics,/setacquiring).
-_PROFIT_PARAMS = {
-    "tax": ("profit_tax_percent", 0.0, 50.0, "%", "Налог УСН"),
-    "logistics": ("profit_logistics_per_unit_rub", 0.0, 1000.0, "₽/шт", "Логистика"),
-    "acquiring": ("profit_acquiring_percent", 0.0, 10.0, "%", "Эквайринг"),
+# Все настройки, которые агент вправе предлагать менять (владелец подтверждает
+# кнопкой). Единый источник правды: execute_action в agent_chat.py импортирует
+# отсюда же. Диапазоны зеркалят валидацию ручных /set*-команд.
+# Формат: alias -> (settings_key, lo, hi, единица, подпись, целочисленная?)
+SETTINGS_PARAMS: dict[str, tuple[str, float, float, str, str, bool]] = {
+    "tax": ("profit_tax_percent", 0.0, 50.0, "%", "Налог УСН", False),
+    "logistics": ("profit_logistics_per_unit_rub", 0.0, 1000.0, "₽/шт", "Логистика (прибыль)", False),
+    "acquiring": ("profit_acquiring_percent", 0.0, 10.0, "%", "Эквайринг", False),
+    "spp": ("spp_percent", 0.0, 50.0, "%", "СПП", False),
+    "sell_price": ("sell_price_rub", 1.0, 1_000_000.0, "₽", "Целевая цена продажи", False),
+    "min_price": ("min_price_rub", 1.0, 1_000_000.0, "₽", "Мин. цена фильтра", True),
+    "alert_cooldown": ("alert_cooldown_minutes", 0.0, 1440.0, "мин", "Кулдаун алертов", True),
+    "wb_commission": ("wb_commission_percent", 0.0, 50.0, "%", "Комиссия WB", False),
+    "margin_logistics": ("logistics_cost_rub", 0.0, 5000.0, "₽", "Логистика (маржа)", False),
+    "storage": ("storage_cost_per_day_rub", 0.0, 1000.0, "₽/день", "Хранение в день", False),
+    "return_rate": ("return_rate_percent", 0.0, 100.0, "%", "Процент возвратов", False),
+    "target_margin": ("target_margin_percent", 0.0, 200.0, "%", "Целевая маржа", False),
+    "batch_size": ("batch_size", 1.0, 10_000.0, "шт", "Размер партии", True),
 }
+
+# settings_key -> целочисленная ли настройка (int-ридеры вроде get_min_price_rub
+# не переваривают строку «9500.0» — храним целые без дробной части).
+SETTINGS_INT_KEYS: frozenset[str] = frozenset(
+    spec[0] for spec in SETTINGS_PARAMS.values() if spec[5]
+)
 
 
 @dataclass(slots=True)
@@ -59,18 +79,33 @@ class AgentToolset:
         settings_repository: SettingsRepository,
         seller_client: SellerClient | None = None,
         feedbacks_client: WBFeedbacksClient | None = None,
+        meta_repository: Any | None = None,
+        item_repository: Any | None = None,
         default_tax_percent: float = 2.0,
         default_logistics_per_unit_rub: float = 182.0,
         default_acquiring_percent: float = 0.0,
+        settings_defaults: dict[str, float] | None = None,
+        max_cache_age_seconds: int = 300,
+        runtime_info: dict[str, Any] | None = None,
         index_cap: int = 40,
     ) -> None:
         self._biz = business_repository
         self._settings = settings_repository
         self._seller = seller_client
         self._fb = feedbacks_client
+        self._meta = meta_repository
+        self._items = item_repository
         self._def_tax = default_tax_percent
         self._def_logi = default_logistics_per_unit_rub
         self._def_acq = default_acquiring_percent
+        # Дефолты настроек (из env-конфига) для get_settings; прибыльные —
+        # из явных default_*-аргументов, чтобы не разъехаться с _profit_costs.
+        self._settings_defaults = dict(settings_defaults or {})
+        self._settings_defaults.setdefault("profit_tax_percent", default_tax_percent)
+        self._settings_defaults.setdefault("profit_logistics_per_unit_rub", default_logistics_per_unit_rub)
+        self._settings_defaults.setdefault("profit_acquiring_percent", default_acquiring_percent)
+        self._max_cache_age = max_cache_age_seconds
+        self._runtime_info = dict(runtime_info or {})
         self._index_cap = index_cap
         self._logger = logging.getLogger(self.__class__.__name__)
         self._index_cache: list[dict[str, Any]] | None = None
@@ -192,6 +227,18 @@ class AgentToolset:
               {"days": {"type": "integer", "minimum": 1, "maximum": 90, "description": "По умолчанию 30"},
                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "description": "По умолчанию 15"}}),
           self._t_returns)
+        r(_fn("get_settings",
+              "Текущие настройки бота: налог, СПП, целевая цена, мин. цена фильтра, кулдаун "
+              "алертов, комиссия, логистика, хранение, возвраты, целевая маржа, размер партии. "
+              "Вызывай ПЕРЕД propose_setting, чтобы видеть, что менять.", {}),
+          self._t_get_settings)
+
+        if self._meta is not None:
+            r(_fn("get_bot_health",
+                  "Здоровье бота: последний успешный скан WB, статус, свежесть кэша, число "
+                  "товаров в кэше, последняя ошибка. Используй для самопроверки «всё ли работает».",
+                  {}),
+              self._t_get_bot_health)
 
         if self._seller is not None:
             r(_fn("get_funnel",
@@ -223,13 +270,18 @@ class AgentToolset:
                "notes": {"type": "string", "description": "Комментарий (опц.)"}},
               required=["quantity", "buy_price_per_unit"]),
           self._t_propose_purchase)
-        r(_fn("propose_profit_setting",
-              "ПРЕДЛОЖИТЬ изменить параметр расчёта прибыли (владелец подтвердит кнопкой). Не применяет.",
-              {"param": {"type": "string", "enum": ["tax", "logistics", "acquiring"],
-                         "description": "tax=налог %, logistics=₽/шт, acquiring=%"},
+        settings_help = ", ".join(
+            f"{alias}={label} ({unit})"
+            for alias, (_key, _lo, _hi, unit, label, _int) in SETTINGS_PARAMS.items()
+        )
+        r(_fn("propose_setting",
+              "ПРЕДЛОЖИТЬ изменить настройку бота (владелец подтвердит кнопкой). Не применяет. "
+              f"Доступно: {settings_help}. Сначала посмотри текущие значения через get_settings.",
+              {"param": {"type": "string", "enum": list(SETTINGS_PARAMS),
+                         "description": "Какую настройку менять"},
                "value": {"type": "number", "minimum": 0, "description": "Новое значение"}},
               required=["param", "value"]),
-          self._t_propose_profit_setting)
+          self._t_propose_setting)
         if self._fb is not None:
             r(_fn("propose_feedback_reply",
                   "ПРЕДЛОЖИТЬ ответ покупателю на отзыв/вопрос (владелец подтвердит кнопкой; публикация "
@@ -414,23 +466,68 @@ class AgentToolset:
             "summary": f"Записать закупку: {quantity} шт × {price:g} ₽ — {label} (итого {total:g} ₽)",
         })
 
-    async def _t_propose_profit_setting(self, args: dict[str, Any]) -> str:
+    async def _t_propose_setting(self, args: dict[str, Any]) -> str:
         param = str(args.get("param", "")).strip().lower()
-        spec = _PROFIT_PARAMS.get(param)
+        spec = SETTINGS_PARAMS.get(param)
         if spec is None:
-            return self._dump({"ok": False, "error": "param ∈ {tax, logistics, acquiring}"})
-        key, lo, hi, unit, label = spec
+            return self._dump({"ok": False,
+                               "error": f"param ∈ {{{', '.join(SETTINGS_PARAMS)}}}"})
+        key, lo, hi, unit, label, is_int = spec
         try:
             value = float(args.get("value"))
         except (TypeError, ValueError):
             return self._dump({"ok": False, "error": "value должно быть числом"})
+        if not math.isfinite(value):
+            return self._dump({"ok": False, "error": "value должно быть конечным числом"})
         if not (lo <= value <= hi):
             return self._dump({"ok": False, "error": f"{label}: значение вне диапазона [{lo:g};{hi:g}]"})
+        if is_int:
+            value = float(int(round(value)))
+        # kind остаётся 'profit_setting' для обратной совместимости с
+        # execute_action и подписанными кнопками (историческое имя).
         return self._dump({
             "ok": True, "kind": "profit_setting",
             "params": {"param": param, "settings_key": key, "value": value},
-            "summary": f"Установить {label} = {value:g}{unit}",
+            "summary": f"Установить {label} = {value:g} {unit}".rstrip(),
         })
+
+    async def _t_get_settings(self, args: dict[str, Any]) -> str:
+        rows = []
+        for alias, (key, _lo, _hi, unit, label, is_int) in SETTINGS_PARAMS.items():
+            default = self._settings_defaults.get(key, 0.0)
+            value = await self._settings.get_float(key, default)
+            rows.append({
+                "param": alias, "label": label,
+                "value": int(value) if is_int else value, "unit": unit,
+            })
+        return self._dump({"settings": rows})
+
+    async def _t_get_bot_health(self, args: dict[str, Any]) -> str:
+        health: dict[str, Any] = dict(self._runtime_info)
+        last_success = await self._meta.get_value("last_success_update_at")
+        health["last_success_scan_at"] = last_success
+        health["last_scan_status"] = await self._meta.get_value("last_update_status")
+        last_error = await self._meta.get_value("last_update_error")
+        health["last_scan_error"] = (last_error or "")[:200] or None
+        health["tracked_articles"] = await self._meta.get_value("last_tracked_count")
+        if self._items is not None:
+            health["items_in_cache"] = await self._items.count_items()
+        age = self._cache_age_seconds(last_success)
+        health["cache_age_seconds"] = age
+        health["cache_stale"] = age is None or age > self._max_cache_age
+        return self._dump(health)
+
+    def _cache_age_seconds(self, last_success_iso: str | None) -> int | None:
+        """Возраст кэша в секундах; None при пустом/битом значении."""
+        if not last_success_iso:
+            return None
+        try:
+            dt = datetime.fromisoformat(last_success_iso)
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
 
     async def _t_propose_feedback_reply(self, args: dict[str, Any]) -> str:
         if self._fb is None:

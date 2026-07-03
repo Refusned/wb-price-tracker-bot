@@ -337,6 +337,28 @@ async def test_execute_profit_setting_bad_key() -> None:
     assert "❌" in out and settings.sets == []
 
 
+async def test_execute_setting_expanded_whitelist() -> None:
+    """Расширенные права: агент чинит и не-прибыльные настройки (СПП и т.п.)."""
+    settings = FakeSettings()
+    out = await execute_action(
+        {"kind": "profit_setting", "params": {"param": "spp",
+                                              "settings_key": "spp_percent", "value": 24.0}},
+        business_repository=FakeBiz(), settings_repository=settings,  # type: ignore[arg-type]
+        feedbacks_client=None, reply_repo=None, config=_cfg())
+    assert "✅" in out and settings.sets == [("spp_percent", "24.0")]
+
+
+async def test_execute_setting_int_key_stored_as_int() -> None:
+    """min_price_rub читается через int(raw) — храним «9500», а не «9500.0»."""
+    settings = FakeSettings()
+    out = await execute_action(
+        {"kind": "profit_setting", "params": {"param": "min_price",
+                                              "settings_key": "min_price_rub", "value": 9500.0}},
+        business_repository=FakeBiz(), settings_repository=settings,  # type: ignore[arg-type]
+        feedbacks_client=None, reply_repo=None, config=_cfg())
+    assert "✅" in out and settings.sets == [("min_price_rub", "9500")]
+
+
 async def test_execute_feedback_posts_even_in_shadow() -> None:
     # Решение: ручное подтверждение публикует НЕЗАВИСИМО от shadow_mode (защита —
     # подпись кнопки + контент-гейт + идемпотентность + только владелец).

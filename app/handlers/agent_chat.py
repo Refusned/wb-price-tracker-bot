@@ -16,6 +16,7 @@ inline-кнопки — здесь, через существующий код, 
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import asdict
 from typing import Any
 
@@ -37,6 +38,7 @@ from app.config import AppConfig
 from app.handlers.common import ensure_allowed, remember_subscriber
 from app.handlers.main_menu import AGENT_BUTTON, main_menu_keyboard
 from app.security import sign_payload, verify_payload
+from app.services.agent_tools import SETTINGS_INT_KEYS, SETTINGS_PARAMS
 from app.services.cabinet_agent import CabinetAgent
 from app.services.feedback_posting import finalize_answer, post_reply_idempotent
 from app.storage.business_repository import BusinessRepository
@@ -49,9 +51,8 @@ logger = logging.getLogger("agent_chat")
 STOP_BTN = "⏹ Завершить диалог"
 NEW_BTN = "🆕 Новый диалог"
 _REPLY_LIMIT = 3900
-_VALID_SETTINGS_KEYS = {
-    "profit_tax_percent", "profit_logistics_per_unit_rub", "profit_acquiring_percent",
-}
+# Один источник правды с propose_setting (agent_tools.SETTINGS_PARAMS).
+_VALID_SETTINGS_KEYS = {spec[0] for spec in SETTINGS_PARAMS.values()}
 
 
 class AgentChatStates(StatesGroup):
@@ -250,11 +251,16 @@ async def execute_action(
         if kind == "profit_setting":
             key = params.get("settings_key")
             if key not in _VALID_SETTINGS_KEYS:
-                return "❌ Неизвестный параметр прибыли."
+                return "❌ Неизвестный параметр настроек."
             value = float(params.get("value"))
+            if not math.isfinite(value):
+                return "❌ Значение должно быть конечным числом."
             # set_value + get_float-читатели (в SettingsRepository нет set_float).
-            await settings_repository.set_value(key, str(value))
-            return f"✅ Параметр обновлён: {key} = {value:g}."
+            # Целочисленные ключи храним как int: get_min_price_rub парсит int(raw)
+            # и молча откатился бы на дефолт от строки «9500.0».
+            stored = str(int(round(value))) if key in SETTINGS_INT_KEYS else str(value)
+            await settings_repository.set_value(key, stored)
+            return f"✅ Параметр обновлён: {key} = {stored}."
 
         if kind == "feedback_reply":
             if feedbacks_client is None or reply_repo is None:
