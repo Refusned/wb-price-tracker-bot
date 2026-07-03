@@ -54,7 +54,7 @@ def get_router(
         await remember_subscriber(message, subscriber_repository)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         metrics = await business_repository.get_daily_metrics(today)
-        await message.answer(build_period_metrics_message("Сегодня", metrics))
+        await message.answer(build_period_metrics_message("Сегодня", metrics), parse_mode="HTML")
 
     @router.message(Command("yesterday"))
     async def yesterday_handler(message: Message) -> None:
@@ -63,7 +63,7 @@ def get_router(
         await remember_subscriber(message, subscriber_repository)
         y = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
         metrics = await business_repository.get_daily_metrics(y)
-        await message.answer(build_period_metrics_message("Вчера", metrics))
+        await message.answer(build_period_metrics_message("Вчера", metrics), parse_mode="HTML")
 
     @router.message(Command("week"))
     async def week_handler(message: Message) -> None:
@@ -71,7 +71,7 @@ def get_router(
             return
         await remember_subscriber(message, subscriber_repository)
         metrics = await business_repository.get_period_metrics(7)
-        await message.answer(build_period_metrics_message("За 7 дней", metrics))
+        await message.answer(build_period_metrics_message("За 7 дней", metrics), parse_mode="HTML")
 
     @router.message(Command("month"))
     async def month_handler(message: Message) -> None:
@@ -79,7 +79,7 @@ def get_router(
             return
         await remember_subscriber(message, subscriber_repository)
         metrics = await business_repository.get_period_metrics(30)
-        await message.answer(build_period_metrics_message("За 30 дней", metrics))
+        await message.answer(build_period_metrics_message("За 30 дней", metrics), parse_mode="HTML")
 
     @router.message(Command("stock"))
     async def stock_handler(message: Message) -> None:
@@ -99,7 +99,8 @@ def get_router(
                 last_sync_at=last_sync_at,
                 fbo_count=fbo_count,
                 fbs_count=fbs_count,
-            )
+            ),
+            parse_mode="HTML",
         )
 
     @router.message(Command("stock_fbs"))
@@ -141,7 +142,7 @@ def get_router(
             return
         await remember_subscriber(message, subscriber_repository)
         data = await insight_engine.get_reorder_recommendation()
-        await message.answer(build_reorder_message(data))
+        await message.answer(build_reorder_message(data), parse_mode="HTML")
 
     @router.message(Command("briefing"))
     async def briefing_handler(message: Message) -> None:
@@ -149,7 +150,7 @@ def get_router(
             return
         await remember_subscriber(message, subscriber_repository)
         briefing = await insight_engine.build_briefing()
-        await message.answer(build_briefing_message(briefing))
+        await message.answer(build_briefing_message(briefing), parse_mode="HTML")
 
     @router.message(Command("advice"))
     async def advice_handler(message: Message) -> None:
@@ -197,7 +198,7 @@ def get_router(
             return
         await remember_subscriber(message, subscriber_repository)
         returns = await business_repository.get_returns(days=30, limit=20)
-        await message.answer(build_returns_message(returns))
+        await message.answer(build_returns_message(returns), parse_mode="HTML")
 
     @router.message(Command("abc"))
     async def abc_handler(message: Message) -> None:
@@ -205,7 +206,7 @@ def get_router(
             return
         await remember_subscriber(message, subscriber_repository)
         abc = await business_repository.get_abc_analysis(days=30)
-        await message.answer(build_abc_message(abc, days=30))
+        await message.answer(build_abc_message(abc, days=30), parse_mode="HTML")
 
     @router.message(Command("cashflow"))
     async def cashflow_handler(message: Message) -> None:
@@ -482,7 +483,7 @@ def get_router(
             logistics_per_unit_rub=log_u,
             acquiring_percent=acq_p,
         )
-        await message.answer(build_profit_message(data, label))
+        await message.answer(build_profit_message(data, label), parse_mode="HTML")
 
     @router.message(Command("settax"))
     async def settax_handler(message: Message, command: CommandObject) -> None:

@@ -619,7 +619,7 @@ class WbUpdateScheduler:
             text = build_new_order_alert(order)
             for chat_id in chat_ids:
                 try:
-                    await self._bot.send_message(chat_id=chat_id, text=text)
+                    await self._bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
                 except Exception as e:
                     self._logger.warning("Failed to send order alert: %s", e)
                 await asyncio.sleep(0.05)
@@ -634,7 +634,7 @@ class WbUpdateScheduler:
             text = build_new_return_alert(sale) if is_return else build_new_sale_alert(sale)
             for chat_id in chat_ids:
                 try:
-                    await self._bot.send_message(chat_id=chat_id, text=text)
+                    await self._bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
                 except Exception as e:
                     self._logger.warning("Failed to send sale alert: %s", e)
                 await asyncio.sleep(0.05)
@@ -710,7 +710,7 @@ class WbUpdateScheduler:
             chat_ids = await self._subscriber_repository.list_active_chat_ids()
             for chat_id in chat_ids:
                 try:
-                    await self._bot.send_message(chat_id=chat_id, text=text)
+                    await self._bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
                 except Exception as e:
                     self._logger.warning("Failed to send briefing: %s", e)
                 await asyncio.sleep(0.05)
