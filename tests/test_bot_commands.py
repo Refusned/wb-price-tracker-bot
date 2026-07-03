@@ -18,10 +18,21 @@ def test_commands_valid_for_telegram() -> None:
         assert 1 <= len(c.description) <= 256, f"описание вне лимита: {c.command}"
 
 
-def test_commands_exist_in_help() -> None:
-    """Каждая команда меню документирована в /help (не фантом)."""
+def test_commands_have_registered_handlers() -> None:
+    """Каждая команда меню реально зарегистрирована хендлером (не фантом).
+
+    Ловит класс бага «в меню есть, обработчика нет» (как были /margin и
+    /setmin в подменю). /start регистрируется через CommandStart().
+    """
     from pathlib import Path
 
-    help_src = (Path(__file__).resolve().parent.parent / "app/handlers/common.py").read_text()
+    root = Path(__file__).resolve().parent.parent
+    sources = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in [*(root / "app/handlers").glob("*.py"), root / "app/arbitrage/handlers.py"]
+    )
+    registered = set(re.findall(r'Command\("([a-z0-9_]+)"\)', sources))
+    if "CommandStart()" in sources:
+        registered.add("start")
     for c in bot_commands():
-        assert f"/{c.command}" in help_src, f"/{c.command} нет в /help"
+        assert c.command in registered, f"/{c.command} в меню, но хендлер не зарегистрирован"
