@@ -289,9 +289,9 @@ async def execute_action(
             return "✅ Ответ опубликован покупателю." if ok else f"❌ Не опубликовано ({status})."
 
         return "❌ Неизвестное действие."
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("agent action '%s' failed", kind)
-        return f"❌ Ошибка выполнения: {exc}"
+        return "❌ Ошибка выполнения. Подробности в логах."
 
 
 async def _safe_edit(callback: CallbackQuery, text: str) -> None:

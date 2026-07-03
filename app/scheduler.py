@@ -387,12 +387,14 @@ class WbUpdateScheduler:
         if not chat_ids:
             return
 
+        # Сырой текст ошибки — только в логи; в чат идёт человеческое сообщение.
+        self._logger.warning("health alert: %s", error_text[:500])
         last_success = await self._meta_repository.get_value("last_success_update_at") or "неизвестно"
         text = (
-            f"API WB не отвечает уже {self._consecutive_failures} цикла(ов) подряд\n"
-            f"Последняя ошибка: {error_text[:200]}\n"
+            f"⚠️ WB API не отвечает ({self._consecutive_failures} цикла подряд)\n"
             f"Последний успешный скан: {last_success}\n"
-            "Бот продолжает попытки, но цены могут быть устаревшими."
+            "Бот продолжает попытки — цены могут быть устаревшими.\n"
+            "Подробности: /status"
         )
         for chat_id in chat_ids:
             try:

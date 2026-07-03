@@ -476,6 +476,7 @@ async def test_execute_swallows_exception() -> None:
         business_repository=BoomBiz(), settings_repository=FakeSettings(),  # type: ignore[arg-type]
         feedbacks_client=None, reply_repo=None, config=_cfg())
     assert "❌ Ошибка" in out  # исключение не пробрасывается наружу
+    assert "db down" not in out  # сырой текст исключения не течёт в чат
 
 
 async def test_execute_feedback_publish_fails() -> None:
