@@ -4,6 +4,7 @@ BusinessRepository — работа с данными бизнеса (свои �
 """
 from __future__ import annotations
 
+import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -523,6 +524,29 @@ class BusinessRepository:
             (start_iso, start_iso),
         )
         return [int(r["nm_id"]) for r in rows if r["nm_id"] is not None]
+
+    async def median_listed_price_for_nm(
+        self, nm_id: int, *, days: int = 30, min_sales: int = 3,
+    ) -> float | None:
+        """Медиана price_with_disc (= listed продавца, цена ДО WB-Скидки/СПП)
+        по своим продажам за окно. Зеркалит граунд-трус tools/spp_probe.py
+        (2026-06-10): price_with_disc из Statistics API совпадает с listed
+        в кабинете продавца. None, если продаж меньше ``min_sales`` —
+        артикул не свой или данных слишком мало, чтобы доверять.
+        """
+        start = (datetime.now(timezone.utc) - timedelta(days=max(days, 1))).strftime("%Y-%m-%d")
+        rows = await self._db.fetchall(
+            """
+            SELECT price_with_disc FROM own_sales
+            WHERE nm_id = ? AND is_return = 0 AND date >= ?
+              AND price_with_disc > 0
+            """,
+            (int(nm_id), start),
+        )
+        values = [float(r["price_with_disc"]) for r in rows]
+        if len(values) < max(min_sales, 1):
+            return None
+        return float(statistics.median(values))
 
     # ---------- Profit calculations ----------
 

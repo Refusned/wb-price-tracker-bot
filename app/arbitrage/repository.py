@@ -260,7 +260,12 @@ class ArbitrageRepository:
         sample_count: int = 1,
         cookie_age_minutes: int | None = None,
         note: str | None = None,
+        wallet_only: bool = False,
     ) -> int:
+        """wallet_only=True — наблюдение измеряет только бонус WB-Кошелька
+        (public взята из card API, т.е. уже ПОСЛЕ СПП — см. m013). Такие
+        строки хранятся для аудита, но исключаются из категорийной и
+        per-nm СПП."""
         if source not in _SPP_SOURCES:
             raise ValueError(f"source must be one of {_SPP_SOURCES}")
         if confidence not in _SPP_CONFIDENCE:
@@ -281,13 +286,15 @@ class ArbitrageRepository:
                 INSERT INTO arb_buyer_spp_observations (
                     nm_id, subject_id, subject_name,
                     public_price_rub, my_buyer_price_rub, spp_percent_observed,
-                    source, confidence, sample_count, cookie_age_minutes, observed_at, note
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source, confidence, sample_count, cookie_age_minutes, observed_at, note,
+                    wallet_only
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(nm_id), subject_id, subject_name,
                     int(public_price_rub), int(my_buyer_price_rub), spp_pct,
                     source, confidence, int(sample_count), cookie_age_minutes, now, note,
+                    int(bool(wallet_only)),
                 ),
             )
             inserted_id = int(cursor.lastrowid or 0)
@@ -302,6 +309,8 @@ class ArbitrageRepository:
         """Round 4: AVG observed buyer-side СПП per category (D27, D35).
 
         Returns None if fewer than ``min_samples`` observations exist in window.
+        wallet_only-строки исключены: они измеряют только бонус кошелька
+        (~5-6%) и разбавляли категорийную СПП почти-нулями (см. m013).
         """
         cutoff = (datetime.now(timezone.utc) - timedelta(days=max(days, 1))).isoformat()
         row = await self._db.fetchone(
@@ -313,7 +322,7 @@ class ArbitrageRepository:
                 MIN(spp_percent_observed) AS min_spp,
                 MAX(spp_percent_observed) AS max_spp
             FROM arb_buyer_spp_observations
-            WHERE subject_id = ? AND observed_at >= ?
+            WHERE subject_id = ? AND observed_at >= ? AND wallet_only = 0
             """,
             (int(subject_id), cutoff),
         )
@@ -334,7 +343,7 @@ class ArbitrageRepository:
             """
             SELECT spp_percent_observed, source, confidence, observed_at, sample_count
             FROM arb_buyer_spp_observations
-            WHERE nm_id = ? AND observed_at >= ?
+            WHERE nm_id = ? AND observed_at >= ? AND wallet_only = 0
             ORDER BY observed_at DESC
             LIMIT 1
             """,
@@ -360,7 +369,7 @@ class ArbitrageRepository:
                    COUNT(*) AS samples,
                    MAX(observed_at) AS last_observed
             FROM arb_buyer_spp_observations
-            WHERE observed_at >= ? AND subject_id IS NOT NULL
+            WHERE observed_at >= ? AND subject_id IS NOT NULL AND wallet_only = 0
             GROUP BY subject_id, subject_name
             HAVING COUNT(*) >= ?
             ORDER BY avg_spp DESC

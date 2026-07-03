@@ -26,6 +26,7 @@ from . import (
     m010_feedback_replies,
     m011_feedback_attempts,
     m012_agent_dialog,
+    m013_spp_wallet_only,
 )
 
 MIGRATIONS = [
@@ -41,4 +42,5 @@ MIGRATIONS = [
     m010_feedback_replies,
     m011_feedback_attempts,
     m012_agent_dialog,
+    m013_spp_wallet_only,
 ]

@@ -144,7 +144,10 @@ async def run() -> None:
                 tariffs_repo=arb_tariffs_repo,
             )
             arb_spp_resolver = PersonalSppResolver(arb_repo)
-            arb_auto_observer = AutoObserver(wb_client=wb_client, arb_repo=arb_repo)
+            arb_auto_observer = AutoObserver(
+                wb_client=wb_client, arb_repo=arb_repo,
+                business_repo=business_repository,
+            )
             arb_scanner = ArbitrageScanner(
                 config=config,
                 wb_client=wb_client,

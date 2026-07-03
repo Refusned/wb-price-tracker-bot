@@ -305,7 +305,9 @@ def get_router(
             await message.answer(
                 "Использование: `/arb_observe <nm_id> <моя_цена_на_checkout> <публичная_цена>`\n\n"
                 "Пример: `/arb_observe 876392996 10658 15000`\n\n"
-                "Где `публичная_цена` — цена без личной СПП (та что видит обычный покупатель).",
+                "Где `публичная_цена` — цена продавца ДО WB-Скидки (СПП): как в кабинете "
+                "продавца / listed конкурента.\n"
+                "⚠️ НЕ бери цену со страницы товара — сайт показывает цену уже ПОСЛЕ СПП.",
                 parse_mode="Markdown",
             )
             return
@@ -367,13 +369,25 @@ def get_router(
             nm_id=nm_id, paid_price_rub=my_price,
             source="checkout_manual", note="quickadd",
         )
-        if result.ok:
+        if result.ok and result.wallet_only:
+            await message.answer(
+                f"✅ Наблюдение #{result.observation_id} записано (wallet-only).\n\n"
+                f"nm: {nm_id}\n"
+                f"Цена с сайта (уже ПОСЛЕ СПП): {result.public_price_rub:,}₽\n".replace(",", " ") +
+                f"Моя цена: {result.paid_price_rub:,}₽\n".replace(",", " ") +
+                f"Скидка кошелька: *{result.spp_percent:.1f}%*\n\n"
+                f"⚠️ Чужой артикул: listed (цену ДО СПП) из публичного API не узнать, "
+                f"поэтому наблюдение НЕ участвует в категорийной СПП. "
+                f"Для неё используй `/arb_observe <nm> <моя_цена> <цена_продавца_до_СПП>`.",
+                parse_mode="Markdown",
+            )
+        elif result.ok:
             await message.answer(
                 f"✅ Наблюдение #{result.observation_id} записано.\n\n"
                 f"nm: {nm_id}\n"
-                f"Публичная цена: {result.public_price_rub:,}₽\n".replace(",", " ") +
+                f"Listed (до СПП, из своих продаж): {result.public_price_rub:,}₽\n".replace(",", " ") +
                 f"Моя цена: {result.paid_price_rub:,}₽\n".replace(",", " ") +
-                f"Моя СПП: *{result.spp_percent:.1f}%* "
+                f"Моя СПП (композит): *{result.spp_percent:.1f}%* "
                 f"({result.public_price_rub - result.paid_price_rub:,}₽ экономии)".replace(",", " "),
                 parse_mode="Markdown",
             )
@@ -452,9 +466,13 @@ def get_router(
             )
             if r.ok:
                 ok_count += 1
+                spp_label = (
+                    f"кошелёк {r.spp_percent:.1f}%, wallet-only"
+                    if r.wallet_only else f"СПП {r.spp_percent:.1f}%"
+                )
                 lines.append(
                     f"✅ nm {nm}: публич {r.public_price_rub}₽ → моя {r.paid_price_rub}₽ "
-                    f"(СПП {r.spp_percent:.1f}%)"
+                    f"({spp_label})"
                 )
             else:
                 fail_count += 1

@@ -516,8 +516,10 @@ def _parse_price_rub(prod: dict) -> int:
     """Extract sale_price in rubles from raw WB product dict.
 
     WB u-search/v18 (2026-05) moved prices into ``sizes[0].price.product``
-    (after seller discount, kopecks). ``sizes[0].price.basic`` is regular.
-    Legacy v9-v14: top-level ``salePriceU`` / ``priceU``.
+    (kopecks). Семантика (cc19124 + tools/spp_probe.py 2026-06-10):
+    ``product`` — цена ПОСЛЕ WB-Скидки (СПП), т.е. то, что покупатель видит
+    на сайте; ``sizes[0].price.basic`` — фейк-РРЦ (~1.8× к listed продавца),
+    НЕ listed. Legacy v9-v14: top-level ``salePriceU`` / ``priceU``.
 
     Returns 0 on missing/unparseable. Logs warning to detect drift.
     """

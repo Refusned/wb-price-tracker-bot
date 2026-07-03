@@ -398,11 +398,15 @@ def get_router(
                     source="purchase", note=f"auto from /buy purchase #{pid}",
                 )
                 if obs.ok:
+                    spp_label = (
+                        f"кошелёк {obs.spp_percent:.1f}%, wallet-only"
+                        if obs.wallet_only else f"СПП {obs.spp_percent:.1f}%"
+                    )
                     observe_note = (
                         f"\n📊 СПП-наблюдение #{obs.observation_id}: "
                         f"публич {obs.public_price_rub:,}₽ → "
                         f"твоя {obs.paid_price_rub:,}₽ "
-                        f"(СПП {obs.spp_percent:.1f}%)".replace(",", " ")
+                        f"({spp_label})".replace(",", " ")
                     )
             except Exception:
                 pass  # best-effort
