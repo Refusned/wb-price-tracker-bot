@@ -67,7 +67,7 @@ def get_router(
             "• `/arb_remove <id>` — отключить\n"
             "• `/arb_keywords <id> include=… exclude=…` — фильтр цвета/варианта\n"
             "\n*Качество (ground-truth):*\n"
-            "• `/arb_mark <nm> <метка>` — пометить связку (wrong_color/…)\n"
+            "• `/arb_mark <nm> <метка>` — пометить связку (`wrong_color`/…)\n"
             "\n*Наблюдения (СПП):*\n"
             "• `/arb_quickadd <nm> <моя_цена>` — авто-fetch публичной\n"
             "• `/arb_bulk` — массовый paste (см. формат внутри)\n"

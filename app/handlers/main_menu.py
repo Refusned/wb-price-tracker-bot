@@ -39,16 +39,18 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
 def get_router(config: AppConfig, subscriber_repo: SubscriberRepository) -> Router:
     router = Router(name="main_menu")
 
+    # Статические тексты меню шлём в HTML: legacy-Markdown ломается на "_"
+    # в именах команд (/spp_trend валил кнопку «Аналитика» целиком).
     async def _show_main(message: Message) -> None:
         await message.answer(
-            "🏠 *Главное меню*\n\n"
+            "<b>🏠 Главное меню</b>\n\n"
             "Выбери раздел:\n"
             "• 🎯 Арбитраж — автономный сканер связок\n"
             "• 💰 Финансы — выручка, прибыль, ABC-анализ\n"
             "• 📊 Аналитика — daily briefing\n"
             "• ⚙️ Настройки — команды и параметры",
             reply_markup=main_menu_keyboard(),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
     @router.message(CommandStart())
@@ -80,7 +82,7 @@ def get_router(config: AppConfig, subscriber_repo: SubscriberRepository) -> Rout
         if not await ensure_allowed(message, config):
             return
         await message.answer(
-            "💰 *Финансы*\n\n"
+            "<b>💰 Финансы</b>\n\n"
             "Команды:\n"
             "• /profit — чистая прибыль\n"
             "• /finance — отчёт за период\n"
@@ -89,7 +91,7 @@ def get_router(config: AppConfig, subscriber_repo: SubscriberRepository) -> Rout
             "• /buy — записать закупку\n"
             "• /calc — калькулятор маржи\n"
             "• /settax, /setlogistics, /setacquiring — настройки",
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
     @router.message(lambda m: m.text == "📊 Аналитика")
@@ -97,14 +99,15 @@ def get_router(config: AppConfig, subscriber_repo: SubscriberRepository) -> Rout
         if not await ensure_allowed(message, config):
             return
         await message.answer(
-            "📊 *Аналитика*\n\n"
+            "<b>📊 Аналитика</b>\n\n"
             "Команды:\n"
             "• /briefing — утренний дайджест\n"
             "• /top10 — топ-10 цен по основному запросу\n"
-            "• /insights — anomaly / shadow-ban\n"
+            "• /insights — аномалии продаж и риск shadow-ban\n"
             "• /spp_trend — динамика моей СПП\n"
-            "• /decisions — последние решения бота",
-            parse_mode="Markdown",
+            "• /decisions — последние решения бота\n"
+            "• /advice — LLM-разбор кабинета",
+            parse_mode="HTML",
         )
 
     @router.message(lambda m: m.text == "⚙️ Настройки")
@@ -112,14 +115,14 @@ def get_router(config: AppConfig, subscriber_repo: SubscriberRepository) -> Rout
         if not await ensure_allowed(message, config):
             return
         await message.answer(
-            "⚙️ *Настройки*\n\n"
+            "<b>⚙️ Настройки</b>\n\n"
             "Команды:\n"
             "• /help — все команды\n"
-            "• /setminprice <₽> — минимальная цена для /top10\n"
+            "• /setminprice — минимальная цена для /top10 (пример: <code>/setminprice 9500</code>)\n"
             "• /status — статус сканера\n"
             "• /rescan — принудительный скан\n"
-            "• /track <nm>, /untrack <nm> — отслеживание артикулов",
-            parse_mode="Markdown",
+            "• /track и /untrack — отслеживание артикулов",
+            parse_mode="HTML",
         )
 
     # Когда арбитраж выключен (ARBITRAGE_ENABLED=false), его роутер не
