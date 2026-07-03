@@ -82,10 +82,10 @@ def get_router(config: AppConfig, subscriber_repo: SubscriberRepository) -> Rout
         await message.answer(
             "💰 *Финансы*\n\n"
             "Команды:\n"
+            "• /profit — чистая прибыль\n"
             "• /finance — отчёт за период\n"
             "• /abc — ABC-анализ артикулов\n"
             "• /returns — последние возвраты\n"
-            "• /margin — расчёт маржи\n"
             "• /buy — записать закупку\n"
             "• /calc — калькулятор маржи\n"
             "• /settax, /setlogistics, /setacquiring — настройки",
@@ -115,10 +115,10 @@ def get_router(config: AppConfig, subscriber_repo: SubscriberRepository) -> Rout
             "⚙️ *Настройки*\n\n"
             "Команды:\n"
             "• /help — все команды\n"
-            "• /setmin <₽> — минимальная цена для /top10\n"
+            "• /setminprice <₽> — минимальная цена для /top10\n"
             "• /status — статус сканера\n"
             "• /rescan — принудительный скан\n"
-            "• /track add/remove <nm> — tracking SKU",
+            "• /track <nm>, /untrack <nm> — отслеживание артикулов",
             parse_mode="Markdown",
         )
 
