@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from aiogram import Dispatcher
 from aiogram.fsm.storage.memory import SimpleEventIsolation
+from aiogram.types import BotCommand
 
 from app.arbitrage import handlers as arbitrage_handlers
 from app.arbitrage.auto_observer import AutoObserver
@@ -29,6 +30,35 @@ from app.storage.repositories import (
     SubscriberRepository,
     TrackedArticleRepository,
 )
+
+
+# Команды для меню Telegram (кнопка «Меню» + автокомплит при вводе «/»).
+# Кураторский набор самых используемых — полный список в /help.
+def bot_commands() -> list[BotCommand]:
+    return [
+        BotCommand(command="start", description="🏠 Главное меню"),
+        BotCommand(command="briefing", description="☀️ Утренний дайджест продаж"),
+        BotCommand(command="profit", description="💰 Чистая прибыль"),
+        BotCommand(command="stock", description="📦 Остатки на складах"),
+        BotCommand(command="today", description="📊 Метрики за сегодня"),
+        BotCommand(command="week", description="📈 Метрики за 7 дней"),
+        BotCommand(command="insights", description="🎯 Аномалии продаж"),
+        BotCommand(command="advice", description="🤖 ИИ-разбор кабинета"),
+        BotCommand(command="chat", description="🤖 Диалог с ИИ-ассистентом"),
+        BotCommand(command="arb", description="🎯 Арбитраж: меню сканера"),
+        BotCommand(command="arb_deals", description="🔥 Свежие связки за 24ч"),
+        BotCommand(command="top10", description="🔎 Топ-10 дешёвых по запросу"),
+        BotCommand(command="deals", description="💸 Сделки с маржой выше порога"),
+        BotCommand(command="calc", description="🧮 Калькулятор маржи"),
+        BotCommand(command="returns", description="🔄 Возвраты за 30 дней"),
+        BotCommand(command="abc", description="📊 ABC-анализ ассортимента"),
+        BotCommand(command="reorder", description="💡 Рекомендация по закупке"),
+        BotCommand(command="purchases", description="🧾 Список закупок"),
+        BotCommand(command="spp", description="💸 Текущий СПП"),
+        BotCommand(command="status", description="⚙️ Состояние бота"),
+        BotCommand(command="help", description="📖 Все команды"),
+        BotCommand(command="stop", description="⏹ Выйти из диалога"),
+    ]
 
 
 def build_dispatcher(
