@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from app.arbitrage.margin import MarginBreakdown
+from app.utils.formatting import shorten
 
 
 def _fmt_rub(value: int) -> str:
@@ -32,7 +33,7 @@ def build_alert_message(
 
     Format keeps single screen of phone view, ~12 lines.
     """
-    name_display = (name or f"nm {nm_id}")[:60]
+    name_display = shorten(name or f"nm {nm_id}", 60)
     brand_part = f" • {brand}" if brand else ""
     confidence = _confidence_emoji(margin.spp_confidence)
 

@@ -8,7 +8,6 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from app.config import AppConfig
-from app.security import safe_md
 from app.services.personal_spp_auto_collector import PersonalSppAutoCollector
 from app.storage.personal_spp_repository import PersonalSppRepository
 
@@ -77,25 +76,26 @@ def get_router(
 
         rows = await personal_spp_repo.history(days=days)
         if not rows:
-            await message.answer(f"За последние {days} дней записей СПП нет.")
+            await message.answer(
+                f"📭 За последние {days} дней записей СПП нет.\n"
+                "Добавить вручную: /setspp_log, собрать из продаж: /refresh_spp"
+            )
             return
 
         # Лимит строк, чтобы не упереться в 4096-символьный лимит Telegram.
+        # Строки вместо markdown-таблицы: Telegram пайп-таблицы не рендерит.
         max_rows = 80
         shown = rows[:max_rows]
-        lines = [
-            "| Дата | Категория | СПП | Источник |",
-            "|---|---|---:|---|",
-        ]
+        lines = [f"💸 История личного СПП (за {days} дн)", ""]
         for row in shown:
-            date = row["snapshot_at"][:10]
+            date_short = row["snapshot_at"][8:10] + "." + row["snapshot_at"][5:7]
             lines.append(
-                f"| {date} | {safe_md(row['category'])} | "
-                f"{_fmt(row['spp_percent'])}% | {safe_md(row['source'])} |"
+                f"{date_short} — {row['category']} — "
+                f"{_fmt(row['spp_percent'])}% ({row['source']})"
             )
         if len(rows) > max_rows:
             lines.append(f"\n…показаны последние {max_rows} из {len(rows)} записей.")
-        await message.answer("\n".join(lines), parse_mode="Markdown")
+        await message.answer("\n".join(lines))
 
     @router.message(Command("spp_trend"))
     async def spp_trend_handler(message: Message) -> None:

@@ -18,7 +18,7 @@ from app.storage.repositories import (
     SubscriberRepository,
     TrackedArticleRepository,
 )
-from app.utils.formatting import format_margin_result, format_price_rub
+from app.utils.formatting import format_margin_result, format_price_rub, shorten
 
 from .common import ensure_allowed, is_cache_stale, remember_subscriber
 
@@ -98,7 +98,7 @@ def get_router(
             lines.append(f"Прибыль: {format_price_rub(result.profit_per_unit)}/шт ({result.margin_percent}%)")
             lines.append(f"На {batch_size} шт: {format_price_rub(result.profit_per_unit * batch_size)}")
             if item.stock_qty is not None:
-                lines.append(f"В наличии: {item.stock_qty} шт.")
+                lines.append(f"В наличии: {item.stock_qty} шт")
             lines.append(f"Артикул: {item.nm_id}")
             lines.append(f"Ссылка: {item.url}")
             lines.append("")
@@ -240,7 +240,7 @@ def get_router(
             f"Хранение: {format_price_rub(storage)}/день (×14 дней = {format_price_rub(storage * 14)})",
             f"Возвраты: {return_rate}%",
             f"Порог маржи: {target}%",
-            f"Размер партии: {int(batch_size)} шт.",
+            f"Размер партии: {int(batch_size)} шт",
         ]
         await message.answer("\n".join(lines))
 
@@ -293,7 +293,7 @@ def get_router(
 
         lines = [f"Отслеживаемые артикулы ({len(articles)}):",""]
         for nm_id, name, _last_seen in articles:
-            lines.append(f"{nm_id} — {name[:40]}")
+            lines.append(f"{nm_id} — {shorten(name, 40)}")
         lines.append("\nДобавить: /track <артикул>")
         lines.append("Убрать: /untrack <артикул>")
         await message.answer("\n".join(lines))

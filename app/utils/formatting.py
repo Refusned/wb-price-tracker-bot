@@ -60,7 +60,7 @@ def build_top10_message(
         body.append(f"~{format_price_rub(site_price)} на сайте (API: {format_price_rub(item.price_rub)})")
 
         if item.stock_qty is not None:
-            body.append(f"В наличии: {item.stock_qty} шт.")
+            body.append(f"В наличии: {item.stock_qty} шт")
         else:
             body.append("В наличии: да")
 
@@ -95,7 +95,7 @@ def build_price_drop_alert_message(
     ]
 
     if event.stock_qty is not None:
-        lines.append(f"В наличии: {event.stock_qty} шт.")
+        lines.append(f"В наличии: {event.stock_qty} шт")
     else:
         lines.append("В наличии: да")
 

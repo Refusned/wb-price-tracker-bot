@@ -33,7 +33,10 @@ def get_router(
 
         rows = await decision_snapshot_repo.recent(limit=limit)
         if not rows:
-            await message.answer("Снимков решений пока нет.")
+            await message.answer(
+                "📭 Снимков решений пока нет.\n"
+                "Они появляются автоматически при алертах о падении цены."
+            )
             return
 
         lines = [f"Последние decision snapshots: {len(rows)}", ""]
